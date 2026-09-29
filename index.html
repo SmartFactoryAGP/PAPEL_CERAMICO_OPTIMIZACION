@@ -1,0 +1,458 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Nesting - Optimización</title>
+<link rel="icon" href="img/favicon-agp.png">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<link rel="stylesheet" href="css/styles.css?v=20260929c">
+</head>
+<body>
+
+<div class="headerRow">
+  <img src="img/agp-logo.png" alt="AGP" class="agpLogo">
+  <div>
+    <h1>Nesting <span>Optimización</span></h1>
+    <div class="sub" style="margin-bottom:0">
+      Carga piezas DXF, define cantidades, simula el anidamiento multi-chapa y exporta.
+    </div>
+  </div>
+</div>
+
+<div id="authBar" style="display:flex; align-items:center; gap:10px; margin:10px 0">
+  <div id="authLoggedOut" style="display:flex; align-items:center; gap:8px">
+    <span class="hint" style="margin:0">Lista de corte, Nesting y Editor de archivos piden iniciar sesión.</span>
+    <button class="secondary" id="authLoginBtn" style="padding:6px 12px;font-size:12px">Iniciar sesión</button>
+  </div>
+  <div id="authLoggedIn" style="display:none; align-items:center; gap:8px">
+    <span class="hint" style="margin:0">Conectado: <b id="authUsuarioActual" style="color:var(--accent)"></b></span>
+    <button class="secondary" id="authLogoutBtn" style="padding:6px 12px;font-size:12px">Cerrar sesión</button>
+  </div>
+</div>
+
+<div id="authLoginPanel" style="display:none; max-width:340px; margin:0 0 14px 0; padding:14px; border:1px solid var(--border,#333); border-radius:10px">
+  <div class="field"><label>Usuario</label><input type="text" id="authUsuarioInput" autocomplete="username"></div>
+  <div class="field" style="margin-top:8px"><label>Contraseña</label><input type="password" id="authClaveInput" autocomplete="current-password"></div>
+  <div class="hint" id="authLoginError" style="color:#f87171; margin-top:6px; display:none"></div>
+  <div style="display:flex; gap:8px; margin-top:10px">
+    <button id="authLoginConfirmBtn" style="flex:1">Ingresar</button>
+    <button class="secondary" id="authLoginCancelBtn" style="flex:1">Cancelar</button>
+  </div>
+</div>
+
+<div class="viewTabs">
+  <button class="viewTab" id="tabOrdenes">Lista de corte 🔒</button>
+  <button class="viewTab" id="tabNesting">Nesting 🔒</button>
+  <button class="viewTab active" id="tabRack">Rack</button>
+  <button class="viewTab" id="tabRepair">Editor de archivos 🔒</button>
+</div>
+
+<div class="layout" id="viewNesting" style="display:none">
+  <div class="panel controls">
+
+    <div class="dropzone" id="dropzone">
+      + Cargar archivos DXF<br><span style="font-size:10px">click o arrastra aquí (.dxf)</span>
+    </div>
+    <input type="file" id="fileInput" accept=".dxf,.DXF" multiple>
+
+    <div id="pieceTableWrap">
+      <div class="empty" id="emptyMsg">Aún no has cargado piezas.</div>
+      <table id="pieceTable" style="display:none">
+        <thead><tr><th></th><th>ID / Pieza</th><th>mm</th><th>Cant.</th><th></th></tr></thead>
+        <tbody id="pieceBody"></tbody>
+      </table>
+    </div>
+
+    <div class="row2">
+      <div class="field"><label>Ancho rollo (mm)</label><input type="number" id="sheetW" value="1000"></div>
+      <div class="field"><label>Largo por chapa (mm)</label><input type="number" id="chapaLen" value="2000"></div>
+    </div>
+    <div class="field"><label>Separación piezas (mm)</label><input type="number" id="kerf" value="1" min="0" max="50" step="0.5"></div>
+
+    <fieldset>
+      <legend>Motor de nesting</legend>
+      <div class="hint" style="margin-top:0">La rotación de cada pieza la decide el <b style="color:var(--accent2)">propio sistema</b>: prueba varias resoluciones de giro por su cuenta y se queda automáticamente con la que da mejor aprovechamiento. No hay nada que configurar acá.</div>
+      <label class="chk"><input type="checkbox" id="allowMirror" checked> Permitir espejar piezas (flip X)</label>
+      <div class="hint">Duplica las orientaciones probadas. Desactívalo si la pieza tiene cara/veta y no puede voltearse.</div>
+      <label class="chk"><input type="checkbox" id="deepSearch" checked> Búsqueda profunda (mejor posición, no la primera)</label>
+      <div class="hint">Evalúa todas las posiciones válidas y elige la que deja menos hueco, en vez de la primera que entra.</div>
+      <label class="chk"><input type="checkbox" id="trimChapa" checked> Recortar cada chapa al largo realmente usado</label>
+      <div class="hint">Para material en rollo: no cuenta ni corta el largo nominal completo si las piezas de esa chapa ocupan menos. El % de aprovechamiento y el DXF exportado reflejan solo el largo de rollo que de verdad se consume — así una chapa "sobrante" con pocas piezas no aparece con un % artificialmente bajo.</div>
+      <div class="field" style="margin-top:10px"><label>Tiempo máximo de cálculo (min)</label><input type="number" id="maxMinutes" value="5" min="0" max="120" step="1"></div>
+      <div class="hint">Con búsqueda profunda activada, se detiene solo al llegar a este tiempo y usa lo mejor que encontró — no hace falta que toques "Detener" a mano. Poné <b style="color:var(--accent2)">0</b> para que no tenga límite (como venía siendo).</div>
+      <label class="chk" style="display:none"><input type="checkbox" id="fineRotation" checked> Rotación fina (cada 2°, como Libélula)</label>
+    </fieldset>
+
+    <fieldset>
+      <legend>Tiras de relleno automáticas</legend>
+      <label class="chk"><input type="checkbox" id="fillStrips" checked> Generar tiras con el sobrante</label>
+      <div class="hint" style="margin-top:6px">Se calculan recién cuando tocás <b style="color:var(--accent2)">"Detener y usar este resultado"</b> (o al terminar, si tenés desactivada la búsqueda profunda) — no vas a verlas mientras el contador de intentos sigue corriendo. Prueban cualquier ángulo, igual que tus piezas, y nunca alargan el corte: si no cabe, no se agrega nada.</div>
+      <div class="row2" style="margin-top:10px">
+        <div class="field"><label>Ancho de tira (mm)</label><input type="number" id="stripW" value="80" min="5" max="500" step="1"></div>
+        <div class="field"><label>Largo mínimo (mm)</label><input type="number" id="stripMinLen" value="120" min="5" max="2000" step="1"></div>
+      </div>
+      <div class="field" style="margin-top:10px"><label>Separación entre tiras (mm)</label><input type="number" id="stripKerf" value="3" min="0" max="50" step="0.5"></div>
+      <div class="hint">Este espaciado es propio de las tiras (no usa el mismo valor que las piezas). Cuando el hueco da para más de 120mm, saca la tira lo más larga que se pueda ahí.</div>
+    </fieldset>
+
+    <div class="row2">
+      <div class="field"><label>Trabajo (para el PDF)</label><input type="text" id="jobName" value=""></div>
+      <div class="field"><label>Máquina</label><input type="text" id="machineName" value="Zund"></div>
+    </div>
+
+    <button id="runBtn">Ejecutar nesting</button>
+    <div class="hint" id="workerStatus" style="margin-top:-6px">Comprobando si el cálculo puede correr en paralelo...</div>
+    <div class="exportrow" style="gap:8px">
+      <button class="secondary" id="stopBtn" style="display:none;flex:1">Detener y usar este resultado</button>
+      <button class="secondary" id="reopenLogBtn" style="display:none;flex:1">Ver historial de intentos</button>
+    </div>
+    <div class="hint" style="margin-top:-6px">Esto no tiene límite de tiempo: sigue probando acomodos en segundo plano y actualiza la vista cada vez que encuentra uno mejor. Corre hasta que vos toques <b style="color:var(--accent2)">Detener</b> — mientras más lo dejes corriendo, mejor puede quedar. Se abre una ventana mostrando qué prueba en cada intento.</div>
+    <div id="progress"></div>
+
+    <div class="exportrow">
+      <button class="secondary" id="btnZip">Descargar DXF (.zip)</button>
+      <button class="secondary" id="btnPdf">Descargar PDF</button>
+    </div>
+    <button class="secondary" id="btnDxfSingle" style="width:100%">DXF único (todas las chapas en un archivo)</button>
+
+    <div class="stats" id="stats">
+      <div class="stat"><span>Chapas generadas</span><b id="stChapas">—</b></div>
+      <div class="stat"><span>Diseños de corte únicos</span><b id="stUnique">—</b></div>
+      <div class="stat"><span>Piezas colocadas</span><b id="stPlaced">—</b></div>
+      <div class="stat warn" id="stUnplacedRow" style="display:none"><span>Piezas sin ubicar</span><b id="stUnplaced">—</b></div>
+      <div class="stat"><span>Piezas espejadas</span><b id="stMirrored">—</b></div>
+      <div class="stat"><span>Largo rollo real usado</span><b id="stRollLen">—</b></div>
+      <div class="stat"><span>Área piezas</span><b id="stArea">—</b></div>
+      <div class="stat"><span>Área chapas usada</span><b id="stSheet">—</b></div>
+      <div class="stat big"><span>Aprovechamiento prom.</span><b id="stUtil">—</b></div>
+      <div class="stat warn"><span>Recorte estimado</span><b id="stWaste">—</b></div>
+      <div class="stat"><span>Tiempo cálculo</span><b id="stTime">—</b></div>
+    </div>
+
+    <div class="note">
+      Cada pieza recibe un <b>ID</b> fijo que se repite en el plano y en la tabla del PDF. Si varias chapas resultan con el mismo diseño de corte, el PDF genera <b>una sola hoja</b> con la nota "cortar N veces". El <b>.zip</b> contiene <code>chapa_01.dxf</code>, <code>chapa_02.dxf</code>… más un <code>resumen.txt</code>.
+    </div>
+  </div>
+
+  <div class="panel stagepanel">
+    <div class="previewBanner" id="previewBanner" style="display:none">
+      <span id="previewBannerText"></span>
+      <button class="secondary" id="exitPreviewBtn">Volver a la vista en vivo</button>
+    </div>
+    <div class="chapasWrap" id="chapasWrap">
+      <div class="empty">Ejecuta el nesting para ver las chapas.</div>
+    </div>
+  </div>
+</div>
+
+<div class="layout" id="viewRepair" style="display:none">
+  <div class="panel controls">
+    <div class="hint" style="margin-top:0;margin-bottom:12px">Cargá cualquier DXF (aunque tenga contornos abiertos), o arrancá uno en blanco — podés mover, agregar y borrar puntos o formas enteras, y dibujar piezas nuevas desde cero.</div>
+
+    <div class="dropzone" id="repairDropzone">
+      + Cargar un DXF para editar<br><span style="font-size:10px">click o arrastra aquí (.dxf)</span>
+    </div>
+    <input type="file" id="repairFileInput" accept=".dxf" style="display:none">
+    <button class="secondary" id="repairNewBtn" style="margin-top:8px;width:100%">Empezar un archivo en blanco</button>
+    <div class="hint" id="repairFileName" style="margin-top:8px"></div>
+
+    <div class="stat big" id="repairStatusBox" style="margin-top:14px">
+      <span>Puntos abiertos</span><b id="repairOpenCount">—</b>
+    </div>
+
+    <fieldset style="margin-top:14px">
+      <legend>Herramientas</legend>
+      <div class="hint" style="margin-top:0">Elegí qué hace un clic sobre el dibujo.</div>
+      <div class="toolRow" style="margin-top:8px">
+        <button class="toolBtn active" data-tool="select">🖱️ Mover</button>
+        <button class="toolBtn" data-tool="pan">✋ Mano</button>
+        <button class="toolBtn" data-tool="addPoint">+ Punto</button>
+        <button class="toolBtn" data-tool="delPoint">− Punto</button>
+      </div>
+      <div class="toolRow" style="margin-top:6px">
+        <button class="toolBtn" data-tool="repair">Unir abiertos</button>
+        <button class="toolBtn" data-tool="line">╱ Línea</button>
+        <button class="toolBtn" data-tool="rect">▭ Rectángulo</button>
+        <button class="toolBtn" data-tool="circle">○ Círculo</button>
+      </div>
+      <div class="toolRow" style="margin-top:6px">
+        <button class="toolBtn" data-tool="polyline">⟨⟩ Polilínea</button>
+        <button class="toolBtn" data-tool="measure">📏 Medir</button>
+      </div>
+      <div class="hint" id="repairToolHint" style="margin-top:8px">Mové un punto o una forma arrastrándola. Hacé clic afuera para deseleccionar.</div>
+      <div class="hint" id="repairMeasureInfo" style="margin-top:6px; display:none">&nbsp;</div>
+      <div class="hint" id="repairSelInfo" style="margin-top:6px; display:none">&nbsp;</div>
+
+      <fieldset id="repairEditShapeBlock" style="margin-top:10px; display:none">
+        <legend>Editar la forma seleccionada</legend>
+        <div class="hint" style="margin-top:0">Escribí la medida nueva y confirmá — se aplica sobre la forma seleccionada.</div>
+        <div class="field" id="repairEditAField" style="margin-top:8px"><label id="repairEditALabel">Radio (mm)</label><input type="number" id="repairEditA" step="0.1"></div>
+        <div class="field" id="repairEditBField" style="margin-top:6px; display:none"><label id="repairEditBLabel">Alto (mm)</label><input type="number" id="repairEditB" step="0.1"></div>
+        <button id="repairEditApplyBtn" style="margin-top:8px;width:100%">Aplicar (Enter)</button>
+      </fieldset>
+      <div class="toolRow" id="repairPolyActions" style="margin-top:8px; display:none">
+        <button class="secondary" id="repairPolyFinishOpen" style="flex:1">Terminar (abierta)</button>
+        <button class="secondary" id="repairPolyFinishClosed" style="flex:1">Cerrar forma</button>
+      </div>
+
+      <fieldset id="repairPrecisionBlock" style="margin-top:10px; display:none">
+        <legend>Entrada precisa</legend>
+        <div class="hint" style="margin-top:0" id="repairPrecHint">Escribí el valor exacto y confirmá, en vez de hacer clic a ojo.</div>
+        <div class="field" id="repairPrecAField" style="margin-top:8px"><label id="repairPrecALabel">Distancia (mm)</label><input type="number" id="repairPrecA" step="0.1"></div>
+        <div class="field" id="repairPrecBField" style="margin-top:6px"><label id="repairPrecBLabel">Ángulo (°, 0=derecha, sentido antihorario)</label><input type="number" id="repairPrecB" step="0.1" value="0"></div>
+        <button id="repairPrecConfirmBtn" style="margin-top:8px;width:100%">Confirmar (Enter)</button>
+      </fieldset>
+
+      <button class="secondary" id="repairDeleteEntityBtn" style="margin-top:10px;width:100%" disabled>Borrar forma seleccionada</button>
+    </fieldset>
+
+    <fieldset style="margin-top:14px">
+      <legend>Dibujar por texto</legend>
+      <div class="hint" style="margin-top:0">Describí la forma y la dibujo — ej: "círculo radio 50", "rectángulo 100x60", "cuadrado 80", "línea 120mm a 45 grados". Ojo: no es una IA que entienda cualquier frase, es un lector de estos formatos puntuales — si no entiende, te lo va a decir.</div>
+      <div class="field" style="margin-top:8px"><input type="text" id="repairChatInput" placeholder='ej: círculo radio 40'></div>
+      <button id="repairChatBtn" style="margin-top:8px;width:100%">Dibujar</button>
+      <div class="hint" id="repairChatStatus" style="margin-top:6px">&nbsp;</div>
+    </fieldset>
+
+    <fieldset style="margin-top:14px">
+      <legend>Reparación automática</legend>
+      <div class="field"><label>Tolerancia de cierre (mm)</label><input type="number" id="repairTol" value="2" min="0.1" max="500" step="0.1"></div>
+      <div class="hint">Junta solos los puntos abiertos que estén a menos de esta distancia entre sí.</div>
+      <button id="repairAutoBtn" style="margin-top:10px;width:100%" disabled>Reparar automáticamente</button>
+    </fieldset>
+
+    <button class="secondary" id="repairUndoBtn" style="margin-top:14px;width:100%" disabled>Deshacer último cambio</button>
+    <button id="repairDownloadBtn" style="margin-top:10px;width:100%" disabled>Descargar DXF</button>
+    <button class="secondary" id="repairSendBtn" style="margin-top:10px;width:100%" disabled>Usar esta pieza en el nesting</button>
+  </div>
+
+  <div class="panel stagepanel">
+    <div class="canvasToolbar">
+      <button class="secondary" id="repairZoomOutBtn" title="Alejar">− Zoom</button>
+      <button class="secondary" id="repairZoomInBtn" title="Acercar">+ Zoom</button>
+      <button class="secondary" id="repairZoomFitBtn" title="Ajustar todo el dibujo a la pantalla">Ajustar vista</button>
+      <span class="hint" id="repairCoordsReadout" style="margin-left:auto">X: —  Y: — mm</span>
+    </div>
+    <div class="hint" style="margin:4px 0 8px">Rueda del mouse: zoom (centrado en el cursor). Botón del medio, arrastrar: mover la vista.</div>
+    <div class="chapasWrap" id="repairCanvasWrap" style="display:flex;align-items:center;justify-content:center;min-height:560px">
+      <div class="empty">Cargá un DXF, o empezá uno en blanco, para editarlo acá.</div>
+    </div>
+  </div>
+</div>
+
+<div class="layout" id="viewOrdenes" style="display:none">
+  <div class="panel controls">
+    <div class="hint" style="margin-top:0;margin-bottom:12px">Trae las órdenes pendientes de SQL, las nestea en un solo lote, y al confirmar las manda al Rack — sin tocarlas a mano una por una.</div>
+
+    <div id="ordSimRackBlock">
+      <label class="chk" style="margin-top:0"><input type="checkbox" id="ordSimRack" checked> Simular el Rack por ahora</label>
+      <div class="hint" style="margin-top:4px">Con esto activado, confirmar un lote NO escribe nada en tu SQL — el Rack se maneja acá nomás, en este navegador, con las ubicaciones reales (A a G, del 1 al 20). No hace falta crear ninguna tabla nueva para esto. Si el día de mañana conseguís permiso para que la app también escriba en SQL, destildá esto — ahí sí va a hacer falta la tabla de <code>server/sql/crear_tabla_control.sql</code>.</div>
+    </div>
+
+    <div class="field" id="ordBridgeUrlField" style="margin-top:14px"><label>Dirección del puente (servidor local)</label><input type="text" id="ordBridgeUrl" value="http://localhost:4000"></div>
+    <div class="field" id="ordApiTokenField" style="margin-top:8px"><label>Clave del puente (si le pusiste una)</label><input type="password" id="ordApiToken" placeholder="dejar vacío si no configuraste API_TOKEN"></div>
+    <div class="hint" id="ordBridgeStatus">&nbsp;</div>
+    <button class="secondary" id="ordRefreshBtn" style="margin-top:10px;width:100%">Actualizar lista de pendientes</button>
+
+    <div class="stat big" id="ordCountBox" style="margin-top:14px">
+      <span>Órdenes pendientes</span><b id="ordCount">—</b>
+    </div>
+
+    <div class="hint" style="margin-top:10px; font-weight:600">Resumen del día</div>
+    <div class="hint" id="ordResumenDia" style="margin-top:4px">—</div>
+
+    <div class="stat big" id="ordLoteCountBox" style="margin-top:10px">
+      <span>En el lote actual</span><b id="ordLoteCount">0</b>
+    </div>
+
+    <fieldset style="margin-top:14px">
+      <legend>Ingreso rápido</legend>
+      <div class="hint" style="margin-top:0">Escribí (o escaneá) un número de orden y tocá Enter — se agrega sola al lote y el cuadro queda listo para la siguiente, así vas poniendo orden, Enter, orden, Enter, sin tocar nada más con el mouse.</div>
+      <input type="text" id="ordIngresoRapidoInput" placeholder="Número de orden y Enter..." autocomplete="off" style="margin-top:8px">
+      <div class="hint" id="ordIngresoRapidoResultado" style="margin-top:6px">&nbsp;</div>
+    </fieldset>
+
+    <fieldset style="margin-top:14px">
+      <legend>Agregar por código de lote</legend>
+      <div class="hint" style="margin-top:0">Escribí un Código_Lote (de vidrios, DF_SAGA_LotesVidro) y tocá Enter — agrega al lote actual TODAS sus órdenes que sean Operation 0132, con su Puestodetrabajo y archivo real, sin aplicar el filtro normal de Puestodetrabajo (por eso pueden aparecer aunque ese campo venga vacío). Si una orden ya está en el lote (de este código u otro), no se repite.</div>
+      <input type="text" id="ordCodigoLoteInput" placeholder="Código de lote y Enter..." autocomplete="off" style="margin-top:8px">
+      <div class="hint" id="ordCodigoLoteResultado" style="margin-top:6px">&nbsp;</div>
+    </fieldset>
+
+    <fieldset style="margin-top:14px">
+      <legend>Lote de corte</legend>
+      <div class="hint" style="margin-top:0">Armá el lote abajo con el botón "+ Lote" en cada orden (o "Agregar visibles al lote" para varias de una). Usa el ancho/largo/kerf y demás ajustes de la pestaña "Nesting" tal como estén configurados ahí. Se detiene solo a los minutos que le pongas acá (no hace falta que alguien lo mire).</div>
+      <div class="field" style="margin-top:10px"><label>Tiempo máximo del lote (min)</label><input type="number" id="ordMaxMinutes" value="2" min="0.5" max="60" step="0.5"></div>
+      <button id="ordRunBtn" style="margin-top:10px;width:100%" disabled>Ejecutar lote de corte</button>
+      <button class="secondary" id="ordConfirmBtn" style="margin-top:10px;width:100%" disabled>Confirmar y enviar al Rack</button>
+      <div class="hint" style="margin-top:6px">"Ejecutar" te lleva un momento a la pestaña Nesting para que veas el acomodo, y cuando termina vuelve solo acá — no mueve nada todavía. Si alguna orden quedó "sin ubicar" (no entró en la chapa), sacala del lote con "Quitar" y agregá otra en su lugar, y volvé a tocar "Ejecutar". Recién cuando esté bien tocá "Confirmar", que genera el PDF, imprime los stickers y manda al Rack solo las que sí quedaron ubicadas.</div>
+    </fieldset>
+
+    <div class="hint" id="ordRunStatus" style="margin-top:10px">&nbsp;</div>
+  </div>
+
+  <!-- Dos columnas lado a lado (como en SAGA): la grande con la Lista
+       de corte en sí, y una angosta al lado con el Lote actual — así
+       ninguna de las dos tapa a la otra y no hace falta bajar la
+       página para ir de una a la otra. Sigue siendo UN solo contenedor
+       (#ordStagePanel) para que el listener por delegación en
+       orders.js, que ya cubre las dos tablas, no necesite tocarse. -->
+  <div class="stagerow" id="ordStagePanel">
+    <div class="panel stagepanel">
+      <div class="field" style="margin-bottom:10px; display:flex; gap:8px; align-items:flex-end">
+        <div style="flex:1"><input type="text" id="ordBuscarInput" placeholder="Buscar por orden, Puestodetrabajo, modelo..."></div>
+        <button class="secondary" id="ordAddAllVisibleBtn" style="white-space:nowrap">+ Agregar visibles al lote</button>
+      </div>
+      <div class="ordTableScroll" id="ordTableWrap">
+        <div class="empty">Tocá "Actualizar lista de pendientes" para traer las órdenes.</div>
+      </div>
+    </div>
+
+    <div class="panel sidepanel">
+      <div class="hint" style="margin-top:0; font-weight:600">Lote actual — las que vas a nestear ahora</div>
+      <div class="hint" style="margin-top:2px">Se arma con el botón "+ Lote" de la tabla de la izquierda. Si después de nestear una pieza no entra, sacala de acá con "Quitar" (vuelve sola a la lista) y agregá otra.</div>
+      <div class="ordTableScroll" id="ordLoteWrap" style="margin-top:8px">
+        <div class="empty">Todavía no agregaste ninguna orden al lote.</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="layout" id="viewRack">
+  <div class="panel controls">
+    <div class="hint" style="margin-top:0;margin-bottom:12px">Acá quedan las órdenes ya cortadas, cada una con su ubicación asignada — se llenan solas cuando confirmás un lote en "Lista de corte".</div>
+    <div class="stat big" style="margin-top:0">
+      <span>Órdenes en rack</span><b id="rackCount">—</b>
+    </div>
+    <div class="hint" style="margin-top:10px">Las ubicaciones van de A1 a G20 (140 lugares).</div>
+
+    <fieldset style="margin-top:14px">
+      <legend>Buscar una orden</legend>
+      <div class="hint" style="margin-top:0">Escaneá con la pistola de código de barras, o escribí el número de orden y Enter. Si buscás una orden a la que le dieron salida por error, acá mismo te va a ofrecer reingresarla en la misma posición en la que estaba.</div>
+      <div class="field" style="margin-top:8px"><input type="text" id="rackBuscarInput" placeholder="Número de orden..." autocomplete="off"></div>
+      <button id="rackBuscarBtn" style="margin-top:8px;width:100%">Buscar</button>
+      <div id="rackBuscarResultado" style="margin-top:10px; padding:10px 12px; border-radius:9px; font-size:13px; display:none"></div>
+    </fieldset>
+
+    <div class="hint" id="rackStickerStatus" style="margin-top:14px">&nbsp;</div>
+  </div>
+  <div class="panel stagepanel">
+    <div class="hint" style="margin-top:0;margin-bottom:10px">Con "🖨 Reimprimir sticker" volvés a mandar el sticker de esa orden (a la Zebra, o el PDF si no está configurada) sin sacarla ni cambiar su ubicación — para cuando se daña, se pierde, o hace falta uno de más.</div>
+    <div class="chapasWrap" id="rackWrap">
+      <div class="empty">Todavía no hay ninguna orden en el rack.</div>
+    </div>
+  </div>
+</div>
+
+<div class="logOverlay" id="logOverlay" style="display:none">
+  <div class="logPanel">
+    <div class="logPanelHead">
+      <div>
+        <div class="logPanelTitle">Historial de intentos</div>
+        <div class="logPanelSub" id="logConstraints">—</div>
+      </div>
+      <button class="iconbtn" id="closeLogBtn" title="Cerrar (el cálculo sigue corriendo igual)">✕</button>
+    </div>
+    <div class="logPanelBody" id="logList"></div>
+    <div class="logPanelFoot" id="logFoot">—</div>
+  </div>
+</div>
+
+<!-- Bloque 4: confirmar qué es cada capa (Corte / Grabado / Ignorar) cuando
+     un DXF trae más de una. Con una sola capa esto ni se muestra. -->
+<div class="logOverlay" id="layerModal" style="display:none">
+  <div class="logPanel" style="width:400px">
+    <div class="logPanelHead">
+      <div>
+        <div class="logPanelTitle">¿Qué es cada capa?</div>
+        <div class="logPanelSub" id="layerModalFile">—</div>
+      </div>
+    </div>
+    <div class="logPanelBody" id="layerModalList" style="flex-direction:column"></div>
+    <div class="logPanelFoot" style="display:flex;justify-content:flex-end">
+      <button id="layerModalConfirm" style="padding:9px 18px">Confirmar</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== núcleo geométrico (sin dependencias del resto) ===== -->
+<script src="js/core/geometry.js?v=20260929c"></script>
+<script src="js/core/polygon.js?v=20260929c"></script>
+<script src="js/core/transform.js?v=20260929c"></script>
+
+<!-- ===== lectura y reparación de DXF ===== -->
+<script src="js/dxf/parser.js?v=20260929c"></script>
+<script src="js/dxf/repair.js?v=20260929c"></script>
+
+<!-- ===== motor de nesting ===== -->
+<script src="js/nesting/orientation.js?v=20260929c"></script>
+<script src="js/nesting/placement.js?v=20260929c"></script>
+<script src="js/nesting/scoring.js?v=20260929c"></script>
+<script src="js/nesting/optimization.js?v=20260929c"></script>
+
+<!-- ===== puente al Web Worker real (Bloque 3) ===== -->
+<script src="js/nesting/worker-bridge.js?v=20260929c"></script>
+
+<!-- ===== tiras de relleno automáticas ===== -->
+<script src="js/strips/strips.js?v=20260929c"></script>
+
+<!-- ===== interfaz ===== -->
+<script src="js/ui/pieces.js?v=20260929c"></script>
+<script src="js/ui/render.js?v=20260929c"></script>
+<script src="js/ui/history.js?v=20260929c"></script>
+<script src="js/ui/repair.js?v=20260929c"></script>
+
+<!-- ===== orquestación del motor (une UI + nesting) ===== -->
+<script src="js/nesting/engine.js?v=20260929c"></script>
+
+<!-- ===== exportación ===== -->
+<script src="js/export/dxf.js?v=20260929c"></script>
+<script src="js/export/zip.js?v=20260929c"></script>
+<script src="js/export/pdf.js?v=20260929c"></script>
+<script src="js/export/stickers.js?v=20260929c"></script>
+
+<!-- ===== arranque de la app (pestañas, etc.) ===== -->
+<script src="js/ui/orders.js?v=20260929c"></script>
+<script src="js/ui/auth.js?v=20260929c"></script>
+<script src="js/app.js?v=20260929c"></script>
+
+<!-- Aviso de seguridad: si el CSS o el JS no llegaron a cargar (por ej.
+     si abriste este archivo haciendo doble clic ADENTRO de un .zip sin
+     extraerlo primero — ahí Windows solo copia el .html que tocaste, no
+     las carpetas css/ y js/ de al lado), esto lo detecta solo y te avisa
+     en vez de dejarte con una página en blanco sin explicación. -->
+<script>
+(function(){
+  function check(){
+    var cssOk = getComputedStyle(document.documentElement).getPropertyValue('--bg').trim() !== '';
+    var jsOk = typeof doNest === 'function';
+    return cssOk && jsOk ? null : {cssOk:cssOk, jsOk:jsOk};
+  }
+  function showBanner(missing){
+    var b = document.createElement('div');
+    b.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:99999;background:#7a1010;color:#fff;'
+      + 'font-family:sans-serif;padding:16px 20px;font-size:14px;line-height:1.6;box-shadow:0 4px 20px rgba(0,0,0,.4)';
+    b.innerHTML = '<b>⚠ Esta página no cargó ' + (!missing.cssOk && !missing.jsOk ? 'el diseño ni el motor' : !missing.cssOk ? 'el diseño (css/styles.css)' : 'el motor (carpeta js/)') + '.</b><br>'
+      + 'Lo más probable es que hayas abierto <code>index.html</code> haciendo doble clic '
+      + '<u>desde adentro del .zip, sin extraerlo primero</u> — en ese modo Windows solo copia ese '
+      + 'archivo suelto, no las carpetas <code>css/</code> y <code>js/</code> de al lado.<br><br>'
+      + '<b>Solución:</b> cerrá esta pestaña → clic derecho sobre el archivo <code>.zip</code> → '
+      + '<b>"Extraer todo..."</b> → abrí <code>index.html</code> desde esa carpeta ya extraída (no desde adentro del zip).';
+    document.body.prepend(b);
+  }
+  // primer chequeo inmediato (para cuando ya está todo resuelto); si algo
+  // todavía no cargó, un segundo chequeo tras una pausa corta antes de
+  // decidir que de verdad falta, para no mostrar un falso aviso de más.
+  var miss = check();
+  if(!miss) return;
+  setTimeout(function(){
+    var miss2 = check();
+    if(miss2) showBanner(miss2);
+  }, 400);
+})();
+</script>
+</body>
+</html>

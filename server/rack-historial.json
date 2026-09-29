@@ -1,0 +1,253 @@
+[
+  {
+    "Ordem_Serial": "11314248",
+    "ubicacion": "A1",
+    "usuario": "Prog1",
+    "evento": "entrada",
+    "fecha": "2026-09-29T19:53:38.257Z"
+  },
+  {
+    "Ordem_Serial": "11362306",
+    "ubicacion": "A2",
+    "usuario": "Prog1",
+    "evento": "entrada",
+    "fecha": "2026-09-29T19:53:38.434Z"
+  },
+  {
+    "Ordem_Serial": "11365263",
+    "ubicacion": "A3",
+    "usuario": "Prog1",
+    "evento": "entrada",
+    "fecha": "2026-09-29T19:53:38.454Z"
+  },
+  {
+    "Ordem_Serial": "11378104",
+    "ubicacion": "A4",
+    "usuario": "Prog1",
+    "evento": "entrada",
+    "fecha": "2026-09-29T19:53:38.477Z"
+  },
+  {
+    "Ordem_Serial": "11378105",
+    "ubicacion": "A5",
+    "usuario": "Prog1",
+    "evento": "entrada",
+    "fecha": "2026-09-29T19:53:38.502Z"
+  },
+  {
+    "Ordem_Serial": "11378106",
+    "ubicacion": "A6",
+    "usuario": "Prog1",
+    "evento": "entrada",
+    "fecha": "2026-09-29T19:53:38.533Z"
+  },
+  {
+    "Ordem_Serial": "11379296",
+    "ubicacion": "A7",
+    "usuario": "Prog1",
+    "evento": "entrada",
+    "fecha": "2026-09-29T19:53:38.556Z"
+  },
+  {
+    "Ordem_Serial": "11388107",
+    "ubicacion": "A8",
+    "usuario": "Prog1",
+    "evento": "entrada",
+    "fecha": "2026-09-29T19:53:38.577Z"
+  },
+  {
+    "Ordem_Serial": "11390249",
+    "ubicacion": "A9",
+    "usuario": "Prog1",
+    "evento": "entrada",
+    "fecha": "2026-09-29T19:53:38.599Z"
+  },
+  {
+    "Ordem_Serial": "11390251",
+    "ubicacion": "A10",
+    "usuario": "Prog1",
+    "evento": "entrada",
+    "fecha": "2026-09-29T19:53:38.620Z"
+  },
+  {
+    "Ordem_Serial": "11338139",
+    "ubicacion": "A11",
+    "usuario": "Prog1",
+    "evento": "entrada",
+    "fecha": "2026-09-29T19:53:38.641Z"
+  },
+  {
+    "Ordem_Serial": "11338144",
+    "ubicacion": "A12",
+    "usuario": "Prog1",
+    "evento": "entrada",
+    "fecha": "2026-09-29T19:53:38.663Z"
+  },
+  {
+    "Ordem_Serial": "11362894",
+    "ubicacion": "A13",
+    "usuario": "Prog1",
+    "evento": "entrada",
+    "fecha": "2026-09-29T19:53:38.683Z"
+  },
+  {
+    "Ordem_Serial": "11379291",
+    "ubicacion": "A14",
+    "usuario": "Prog1",
+    "evento": "entrada",
+    "fecha": "2026-09-29T19:53:38.701Z"
+  },
+  {
+    "Ordem_Serial": "11386107",
+    "ubicacion": "A15",
+    "usuario": "Prog1",
+    "evento": "entrada",
+    "fecha": "2026-09-29T19:53:38.717Z"
+  },
+  {
+    "Ordem_Serial": "11389291",
+    "ubicacion": "A16",
+    "usuario": "Prog1",
+    "evento": "entrada",
+    "fecha": "2026-09-29T19:53:38.750Z"
+  },
+  {
+    "Ordem_Serial": "11390247",
+    "ubicacion": "A17",
+    "usuario": "Prog1",
+    "evento": "entrada",
+    "fecha": "2026-09-29T19:53:38.767Z"
+  },
+  {
+    "Ordem_Serial": "11390248",
+    "ubicacion": "A18",
+    "usuario": "Prog1",
+    "evento": "entrada",
+    "fecha": "2026-09-29T19:53:38.785Z"
+  },
+  {
+    "Ordem_Serial": "11390253",
+    "ubicacion": "A19",
+    "usuario": "Prog1",
+    "evento": "entrada",
+    "fecha": "2026-09-29T19:53:38.803Z"
+  },
+  {
+    "Ordem_Serial": "11390828",
+    "ubicacion": "A20",
+    "usuario": "Prog1",
+    "evento": "entrada",
+    "fecha": "2026-09-29T19:53:38.819Z"
+  },
+  {
+    "Ordem_Serial": "11390264",
+    "ubicacion": "B1",
+    "usuario": "Prog1",
+    "evento": "entrada",
+    "fecha": "2026-09-29T19:53:38.859Z"
+  },
+  {
+    "Ordem_Serial": "11390284",
+    "ubicacion": "B2",
+    "usuario": "Prog1",
+    "evento": "entrada",
+    "fecha": "2026-09-29T19:53:38.877Z"
+  },
+  {
+    "Ordem_Serial": "11338152",
+    "ubicacion": "B3",
+    "usuario": "Prog1",
+    "evento": "entrada",
+    "fecha": "2026-09-29T19:53:38.894Z"
+  },
+  {
+    "Ordem_Serial": "11224289",
+    "ubicacion": "B4",
+    "usuario": "Prog1",
+    "evento": "entrada",
+    "fecha": "2026-09-29T19:53:38.909Z"
+  },
+  {
+    "Ordem_Serial": "11236001",
+    "ubicacion": "B5",
+    "usuario": "Prog1",
+    "evento": "entrada",
+    "fecha": "2026-09-29T19:53:38.925Z"
+  },
+  {
+    "Ordem_Serial": "11303151",
+    "ubicacion": "B6",
+    "usuario": "Prog1",
+    "evento": "entrada",
+    "fecha": "2026-09-29T19:53:38.940Z"
+  },
+  {
+    "Ordem_Serial": "11327942",
+    "ubicacion": "B7",
+    "usuario": "Prog1",
+    "evento": "entrada",
+    "fecha": "2026-09-29T19:53:38.955Z"
+  },
+  {
+    "Ordem_Serial": "11327943",
+    "ubicacion": "B8",
+    "usuario": "Prog1",
+    "evento": "entrada",
+    "fecha": "2026-09-29T19:53:38.971Z"
+  },
+  {
+    "Ordem_Serial": "11344763",
+    "ubicacion": "B9",
+    "usuario": "Prog1",
+    "evento": "entrada",
+    "fecha": "2026-09-29T19:53:38.988Z"
+  },
+  {
+    "Ordem_Serial": "11368764",
+    "ubicacion": "B10",
+    "usuario": "Prog1",
+    "evento": "entrada",
+    "fecha": "2026-09-29T19:53:39.003Z"
+  },
+  {
+    "Ordem_Serial": "11368767",
+    "ubicacion": "B11",
+    "usuario": "Prog1",
+    "evento": "entrada",
+    "fecha": "2026-09-29T19:53:39.020Z"
+  },
+  {
+    "Ordem_Serial": "11388110",
+    "ubicacion": "B12",
+    "usuario": "Prog1",
+    "evento": "entrada",
+    "fecha": "2026-09-29T19:53:39.036Z"
+  },
+  {
+    "Ordem_Serial": "11389196",
+    "ubicacion": "B13",
+    "usuario": "Prog1",
+    "evento": "entrada",
+    "fecha": "2026-09-29T19:53:39.058Z"
+  },
+  {
+    "Ordem_Serial": "11389196",
+    "ubicacion": "B13",
+    "orden": {
+      "Ordem_Serial": "11389196",
+      "Operation": "0132",
+      "Centro_Trabalho": "01CORTE",
+      "Puestodetrabajo": "04SER_VT",
+      "ClaveModelo": "32VPMO",
+      "CodMat": "000000000100000093",
+      "Name": "PRO1787000A1008",
+      "ZTipo": "Z_VDIN_0600_",
+      "Descricao": "GLASS CLEAR XYG 6.00MM",
+      "ARCHIVO": "//192.168.2.2/cnc-revisados/FORD/FORD EXPEDITION MAX U703 4D U 2025/V-00 ESTÁNDAR NIVEL-III/PRO1787000A1008.dxf",
+      "ubicacion": "B13"
+    },
+    "usuario": null,
+    "evento": "salida",
+    "fecha": "2026-09-29T19:54:14.496Z"
+  }
+]
