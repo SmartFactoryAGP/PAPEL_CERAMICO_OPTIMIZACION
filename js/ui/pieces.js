@@ -8,6 +8,27 @@ function buildIdMap(){
   return m;
 }
 
+function newPieceId(prefix){ return (prefix||'p')+Date.now()+Math.random().toString(16).slice(2,6); }
+/* Único lugar donde se arma una pieza a partir de su contorno (ya
+   normalizado): fast/bbox/área/perímetro/color se calculan acá. Lo usan
+   la carga de DXF, "Ejecutar lote de corte" (orders.js) y "Usar esta
+   pieza en el nesting" (Editor de archivos) — antes cada uno tenía su
+   propia copia de estas líneas. `extra` agrega/pisa campos puntuales
+   (engraveLoops, holes, error, isOrdenLote...). */
+function createPiece(id, name, poly, extra){
+  return Object.assign({
+    id, name,
+    points: poly,
+    fast: poly ? simplify(poly, 0.8) : null,  // versión ligera para el nesting
+    bbox: poly ? polyBBox(poly) : null,
+    area: poly ? polyArea(poly) : 0,
+    perimeter: poly ? polyPerimeter(poly) : 0,
+    qty: poly ? 1 : 0,
+    color: PALETTE[pieces.length % PALETTE.length],
+    error: null
+  }, extra);
+}
+
 /* ---------- carga de archivos ---------- */
 document.getElementById('dropzone').addEventListener('click', ()=>document.getElementById('fileInput').click());
 document.getElementById('fileInput').addEventListener('change', e=>handleFiles(e.target.files));
@@ -38,6 +59,12 @@ function handleFiles(fileList){
   });
 }
 
+/* grabado/agujeros de buildLayeredGeometry: null si no hay ninguno (no
+   una lista vacía) — el resto de la app pregunta por `p.holes` a secas. */
+function extrasDeGeometria(result, campo){
+  return result && result[campo] && result[campo].length ? result[campo] : null;
+}
+
 function addPieceFromLayers(fileName, entities, layerMap){
   let result = null, error = null;
   try {
@@ -45,23 +72,11 @@ function addPieceFromLayers(fileName, entities, layerMap){
     if(!result) error = 'sin contorno cerrado';
   } catch(err){ error = 'error de lectura'; }
   const poly = result ? result.mainPoly : null;
-  const engraveLoops = result && result.engraveLoops && result.engraveLoops.length ? result.engraveLoops : null;
-  const holes = result && result.holes && result.holes.length ? result.holes : null;
-  const bbox = poly ? polyBBox(poly) : null;
-  pieces.push({
-    id: 'p'+Date.now()+Math.random().toString(16).slice(2,6),
-    name: fileName.replace(/\.(dxf|DXF)$/,''),
-    points: poly,
-    fast: poly ? simplify(poly, 0.8) : null,  // versión ligera para el nesting
-    engraveLoops,  // Bloque 4: geometría de grabado, en las mismas coordenadas locales de la pieza
-    holes,         // agujeros interiores (se cortan, van en la misma capa que el contorno)
-    bbox,
-    area: poly ? polyArea(poly) : 0,
-    perimeter: poly ? polyPerimeter(poly) : 0,
-    qty: poly ? 1 : 0,
-    color: PALETTE[pieces.length % PALETTE.length],
+  pieces.push(createPiece(newPieceId(), fileName.replace(/\.(dxf|DXF)$/,''), poly, {
+    engraveLoops: extrasDeGeometria(result, 'engraveLoops'), // Bloque 4: geometría de grabado, en las mismas coordenadas locales de la pieza
+    holes: extrasDeGeometria(result, 'holes'),               // agujeros interiores (se cortan, van en la misma capa que el contorno)
     error
-  });
+  }));
   renderPieceTable();
 }
 
@@ -94,8 +109,8 @@ function showLayerModal(job, posicion, total, onConfirm){
     total>1 ? `${job.fileName}  (archivo ${posicion} de ${total})` : job.fileName;
   list.innerHTML = job.layers.map(layerName=>{
     const guess = guessLayerOp(layerName);
-    return `<div class="layerRow" data-layer="${layerName.replace(/"/g,'&quot;')}">
-      <span class="layerName">${layerName || '(sin nombre)'}</span>
+    return `<div class="layerRow" data-layer="${escapeHtml(layerName)}">
+      <span class="layerName">${escapeHtml(layerName || '(sin nombre)')}</span>
       <select class="layerOpSelect">
         <option value="cut" ${guess==='cut'?'selected':''}>Corte</option>
         <option value="engrave" ${guess==='engrave'?'selected':''}>Grabado</option>
@@ -135,7 +150,7 @@ function renderPieceTable(){
     const autoTag = p.isStrip ? `<span class="mirrorTag" style="background:var(--accent3-soft);color:var(--accent3)" title="Generada automáticamente por el sistema a partir del sobrante">AUTO</span>` : '';
     const engraveTag = p.engraveLoops ? `<span class="mirrorTag" style="background:var(--accent2-soft);color:var(--accent2)" title="Esta pieza también tiene líneas de grabado, se llevan con ella">GRABADO</span>` : '';
     const holesTag = p.holes ? `<span class="mirrorTag" style="background:var(--info-soft,rgba(94,179,255,.15));color:var(--info)" title="${p.holes.length} agujero(s) interior(es) detectado(s) — se cortan junto con la pieza">${p.holes.length} AGUJERO${p.holes.length===1?'':'S'}</span>` : '';
-    tdName.innerHTML = badge + (p.error ? `${p.name}<div class="err">${p.error}</div>` : p.name) + autoTag + engraveTag + holesTag;
+    tdName.innerHTML = badge + (p.error ? `${escapeHtml(p.name)}<div class="err">${escapeHtml(p.error)}</div>` : escapeHtml(p.name)) + autoTag + engraveTag + holesTag;
     tr.appendChild(tdName);
 
     const tdDim = document.createElement('td');
@@ -188,15 +203,3 @@ function drawThumb(canvas, pts, color, holes){
   ctx.strokeStyle=color; ctx.lineWidth=1.5/scale; ctx.stroke();
   ctx.restore();
 }
-
-/* =========================================================
-   NESTING v2 — orientaciones (rotación libre + espejo) y
-   colocación bottom-left con puntaje de contacto
-   ========================================================= */
-
-/* ---------------------------------------------------------
-   Máscaras de orientación en formato "spans por fila".
-   Cada fila de la pieza se guarda como pares [xIni, xFin]
-   contiguos. Eso permite testear colisión y contacto en
-   O(filas) usando conteos acumulados, no celda por celda.
-   --------------------------------------------------------- */

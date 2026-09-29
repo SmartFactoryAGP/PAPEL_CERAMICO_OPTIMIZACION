@@ -26,13 +26,13 @@ const PURE_FN_NAMES = [
   // core/geometry.js, core/polygon.js, core/transform.js
   'polyBBox','transformPoly','rotateRaw','pip','distPointSeg','distToPoly','rasterizePoly',
   'cellsToRowSpans','polyArea','polyPerimeter','normalize','simplify',
-  // nesting/orientation.js
-  'buildOrientations',
+  // nesting/orientation.js (+ la huella de geometría de su caché global)
+  'hashTexto','huellaGeometria','buildOrientations',
   // nesting/placement.js
   'makeChapa','refreshRow','rowOccupied','rowCount','fits','contact',
   'spanOverlap','minStartY','findBestPlacement','commitPlacement',
   // nesting/optimization.js
-  'shuffleArray','placeJobPure',
+  'shuffleArray','placedRecord','placeJobPure',
   // nesting/optimization.js — repack de una chapa ("ataque dirigido"),
   // antes SIEMPRE en el hilo principal, ahora también viaja al Worker
   'permutations','repackSingleChapa','repackChapaFromDefs',
@@ -50,7 +50,10 @@ let workerReady = false;
 let workerInitError = null;
 
 function buildWorkerSource(){
-  const parts = ['"use strict";', 'let ORI_CAP = 24;'];
+  // estado global que usan las funciones puras (ver orientation.js). La
+  // caché de orientaciones del Worker vive mientras viva el Worker: es la
+  // que evita volver a rasterizar todas las piezas en cada pasada.
+  const parts = ['"use strict";', 'let ORI_CAP = 24;', 'const ORI_CACHE = new Map();', `const ORI_CACHE_MAX = ${ORI_CACHE_MAX};`];
   PURE_FN_NAMES.forEach(name=>{
     const fn = (typeof window!=='undefined' ? window[name] : self[name]);
     if(typeof fn !== 'function') throw new Error('falta la función pura "'+name+'" — no se pudo armar el Worker');
@@ -109,6 +112,11 @@ function initNestingWorker(){
     nestingWorker.onerror = function(e){
       console.warn('[worker-bridge] el Worker de nesting tiró un error, se sigue en el hilo principal:', e.message);
       workerReady = false;
+      // quien estaba esperando respuesta pasa YA al hilo principal, en vez
+      // de quedarse colgado hasta el timeout (hasta 20s sin hacer nada).
+      // No se rearma el Worker acá: si el error es de carga (el código
+      // armado no compila), rearmarlo daría el mismo error en bucle.
+      failPendingWorkerCalls('el Worker tiró un error');
       updateWorkerStatusUI();
     };
     workerReady = true;
@@ -120,13 +128,27 @@ function initNestingWorker(){
   updateWorkerStatusUI();
 }
 
-let msgId = 0;
-const pending = new Map();
+let workerMsgId = 0;
+const workerPending = new Map(); // id de mensaje -> callback que resuelve la promesa de quien pidió
 function handleWorkerMessage(ev){
-  const cb = pending.get(ev.data.id);
+  const cb = workerPending.get(ev.data.id);
   if(!cb) return;
-  pending.delete(ev.data.id);
+  workerPending.delete(ev.data.id);
   cb(ev.data);
+}
+function failPendingWorkerCalls(motivo){
+  workerPending.forEach(cb=>cb({ok:false, error:motivo}));
+  workerPending.clear();
+}
+/* Mata el Worker actual (con lo que tenga a medio calcular), resuelve
+   como fallidos los pedidos pendientes y arma uno nuevo, listo para la
+   próxima pasada. */
+function recycleNestingWorker(motivo){
+  try { nestingWorker.terminate(); } catch(e){ /* nada que hacer */ }
+  failPendingWorkerCalls(motivo);
+  nestingWorker = null;
+  workerReady = false;
+  try { initNestingWorker(); } catch(e){ workerInitError = e.message; }
 }
 
 /* El Worker corre en su propio hilo, así que "Detener" (que solo pone
@@ -141,30 +163,33 @@ function handleWorkerMessage(ev){
    sigue su curso. Se arma un Worker nuevo al toque para la próxima vez. */
 function abortNestingWorker(){
   if(!nestingWorker) return;
-  try { nestingWorker.terminate(); } catch(e){ /* nada que hacer */ }
-  pending.forEach(cb=>cb({ok:false, error:'detenido por el usuario'}));
-  pending.clear();
-  nestingWorker = null;
-  workerReady = false;
-  // se arma uno nuevo enseguida, listo para la próxima corrida de nesting
-  try { initNestingWorker(); } catch(e){ workerInitError = e.message; }
+  recycleNestingWorker('detenido por el usuario');
+}
+
+/* Manda un pedido al Worker y devuelve una promesa con su respuesta cruda
+   ({ok, res} / {ok:false, error}), o null si el Worker no está disponible
+   o no se le pudo mandar nada. Si no contesta a tiempo, el Worker se
+   RECICLA: antes solo se dejaba de esperar, pero el Worker seguía
+   calculando esa pasada ya descartada (hasta terminarla) mientras el hilo
+   principal repetía la misma pasada por su cuenta — dos veces el trabajo,
+   y la pasada siguiente del Worker compitiendo con la zombi. */
+function postToWorker(message, timeoutMs){
+  return new Promise((resolve)=>{
+    if(!workerReady || !nestingWorker){ resolve(null); return; }
+    const id = ++workerMsgId;
+    const timer = setTimeout(()=>recycleNestingWorker('tiempo de espera agotado'), timeoutMs);
+    workerPending.set(id, (msg)=>{ clearTimeout(timer); resolve(msg); });
+    try { nestingWorker.postMessage(Object.assign({id}, message)); }
+    catch(e){ clearTimeout(timer); workerPending.delete(id); resolve(null); }
+  });
 }
 
 /* Corre cfg en el Worker y devuelve el resultado, o null si el Worker no
    está disponible, tarda demasiado, o falla — en cualquiera de esos casos
    quien llama (runNestingPass) sigue con el camino de siempre, sin cortarse. */
-function runInWorker(cfg, timeoutMs){
-  return new Promise((resolve)=>{
-    if(!workerReady || !nestingWorker){ resolve(null); return; }
-    const id = ++msgId;
-    const timer = setTimeout(()=>{ pending.delete(id); resolve(null); }, timeoutMs||20000);
-    pending.set(id, (msg)=>{
-      clearTimeout(timer);
-      resolve(msg.ok ? msg.res : null);
-    });
-    try { nestingWorker.postMessage({id, cfg}); }
-    catch(e){ clearTimeout(timer); pending.delete(id); resolve(null); }
-  });
+async function runInWorker(cfg, timeoutMs){
+  const msg = await postToWorker({cfg}, timeoutMs||20000);
+  return msg && msg.ok ? msg.res : null;
 }
 
 /* Igual que runInWorker, pero para el "ataque dirigido" (repack de una
@@ -173,18 +198,9 @@ function runInWorker(cfg, timeoutMs){
    último es un resultado válido (res:null), no un fallo; si se
    confundieran, cada repack sin mejora forzaría repetir el cálculo
    entero en el hilo principal, perdiendo la mitad de la ganancia. */
-function runRepackInWorker(cfg, timeoutMs){
-  return new Promise((resolve)=>{
-    if(!workerReady || !nestingWorker){ resolve({fromWorker:false}); return; }
-    const id = ++msgId;
-    const timer = setTimeout(()=>{ pending.delete(id); resolve({fromWorker:false}); }, timeoutMs||6000);
-    pending.set(id, (msg)=>{
-      clearTimeout(timer);
-      resolve(msg.ok ? {fromWorker:true, res:msg.res} : {fromWorker:false});
-    });
-    try { nestingWorker.postMessage({id, kind:'repack', cfg}); }
-    catch(e){ clearTimeout(timer); pending.delete(id); resolve({fromWorker:false}); }
-  });
+async function runRepackInWorker(cfg, timeoutMs){
+  const msg = await postToWorker({kind:'repack', cfg}, timeoutMs||6000);
+  return msg && msg.ok ? {fromWorker:true, res:msg.res} : {fromWorker:false};
 }
 
 // se intenta arrancar el Worker apenas carga la página; si falla, queda

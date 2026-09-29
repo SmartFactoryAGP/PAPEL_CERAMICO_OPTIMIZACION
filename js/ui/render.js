@@ -1,3 +1,6 @@
+/* =========================================================
+   DIBUJO DE CHAPA (pantalla y PDF)
+   ========================================================= */
 function utilColor(pct){
   if(pct>=85) return '#22a355';
   if(pct>=70) return '#d98a1f';
@@ -159,7 +162,3 @@ function updateStats(sheetW, chapaLen, chapas, jobCount, unplacedCount, ms){
   document.getElementById('stWaste').textContent = (100-util).toFixed(1)+' %';
   document.getElementById('stTime').textContent = ms.toFixed(0)+' ms';
 }
-
-/* =========================================================
-   EXPORT DXF
-   ========================================================= */

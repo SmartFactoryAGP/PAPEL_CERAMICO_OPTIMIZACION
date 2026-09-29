@@ -1,3 +1,5 @@
+/* Chapa = occupancy + prefix sums por fila (para colisión O(1) por span)
+   + skyline (altura ocupada máx. por columna) para saltar filas imposibles. */
 function makeChapa(GW, GH){
   return {
     occ: new Uint8Array(GW*GH),

@@ -1,3 +1,4 @@
+/* ---- ZIP: una carpeta con un DXF por chapa ---- */
 async function exportZIP(){
   if(!lastResult || !lastResult.chapas.length){ alert('Ejecuta el nesting primero.'); return; }
   if(typeof JSZip==='undefined'){ alert('JSZip no cargó (revisa tu conexión). Usa "DXF único" como alternativa.'); return; }
@@ -79,7 +80,3 @@ function downloadBlob(content, filename, mime){
 }
 document.getElementById('btnZip').addEventListener('click', exportZIP);
 document.getElementById('btnDxfSingle').addEventListener('click', exportDXFSingle);
-
-/* =========================================================
-   EXPORT PDF — una hoja por diseño de corte único
-   ========================================================= */

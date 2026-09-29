@@ -38,7 +38,3 @@ function simplify(pts, tol){
   for(let i=0;i<pts.length;i++) if(keep[i]) out.push(pts[i]);
   return out.length>=3?out:pts;
 }
-
-/* =========================================================
-   PARSER DXF MÍNIMO
-   ========================================================= */

@@ -1,3 +1,13 @@
+/* =========================================================
+   NESTING v2 — orientaciones (rotación libre + espejo)
+   Máscaras de orientación en formato "spans por fila": cada fila de la
+   pieza se guarda como pares [xIni, xFin] contiguos. Eso permite testear
+   colisión y contacto en O(filas) usando conteos acumulados, no celda
+   por celda (ver placement.js).
+   ========================================================= */
+// tope de orientaciones evaluadas por pieza: ya vienen ordenadas de la más
+// compacta a la más "desperdiciada", así que recortar la cola casi no cuesta
+// calidad y evita que una pieza con muchos ángulos únicos frene todo el cálculo.
 let ORI_CAP = 24;
 // se sube desde nesting/engine.js cuando el usuario activa "rotación fina":
 // con pasos de 2° se generan muchas más orientaciones por pieza, y con el
@@ -15,9 +25,55 @@ function setOriCap(n){ ORI_CAP = n; }
    sí (vértices × orientaciones a probar), no el tamaño de la chapa. Ahora
    cede el hilo cada pocas orientaciones — quien llama tiene que hacer
    `await buildOrientations(...)` (ver optimization.js y strips.js). */
+/* Caché GLOBAL de orientaciones, por huella de la geometría (no por
+   identidad del objeto pieza). La caché de siempre (piece._oris) solo
+   acierta si llega el MISMO objeto — pero al Web Worker cada pasada le
+   llega una copia nueva de las piezas (postMessage clona), y el "ataque
+   dirigido" (runRepackPass) también arma defs nuevos en cada intento:
+   en esos dos caminos, que son justo los que más corren en la Fase 2, se
+   volvían a rasterizar TODAS las orientaciones de TODAS las piezas en
+   cada intento (lo más caro de todo el motor). Resultado idéntico — las
+   orientaciones son deterministas para la misma geometría y parámetros —
+   solo que calculado una vez. Acotada a ORI_CACHE_MAX entradas (se
+   descarta la usada hace más tiempo) para no crecer sin límite en
+   sesiones largas. Solo entran piezas reales (con id): los rectángulos
+   de prueba de las tiras de relleno (strips.js) cambian de largo en cada
+   paso de la bisección y solo servirían para desalojar a las piezas. */
+const ORI_CACHE = new Map();
+const ORI_CACHE_MAX = 300;
+/* Hash de 53 bits (cyrb53) de un texto — para la huella de geometría. */
+function hashTexto(str){
+  let h1 = 0xdeadbeef, h2 = 0x41c6ce57;
+  for(let i=0;i<str.length;i++){
+    const ch = str.charCodeAt(i);
+    h1 = Math.imul(h1 ^ ch, 2654435761);
+    h2 = Math.imul(h2 ^ ch, 1597334677);
+  }
+  h1 = Math.imul(h1 ^ (h1>>>16), 2246822507) ^ Math.imul(h2 ^ (h2>>>13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2>>>16), 2246822507) ^ Math.imul(h1 ^ (h1>>>13), 3266489909);
+  return 4294967296*(2097151 & h2) + (h1>>>0);
+}
+/* Todo lo que determina el resultado de buildOrientations: contorno
+   rápido y completo, grabado y agujeros (viajan rotados en cada
+   orientación). El largo del texto va en la clave para que un choque de
+   hash sea, en la práctica, imposible. */
+function huellaGeometria(piece){
+  const txt = JSON.stringify([piece.fast||null, piece.points, piece.engraveLoops||null, piece.holes||null]);
+  return hashTexto(txt)+':'+txt.length;
+}
+
 async function buildOrientations(piece, cell, grow, angles, mirrors){
-  const key = `${cell}|${grow}|${angles.join(',')}|${mirrors.join(',')}`;
+  // ORI_CAP va en la clave: el resultado se recorta a ese tope, así que
+  // con otro tope no es el mismo resultado.
+  const key = `${cell}|${grow}|${angles.join(',')}|${mirrors.join(',')}|${ORI_CAP}`;
   if(piece._oriKey===key && piece._oris) return piece._oris;
+  const globalKey = piece.id!=null ? huellaGeometria(piece)+'|'+key : null;
+  const enCache = globalKey && ORI_CACHE.get(globalKey);
+  if(enCache){
+    ORI_CACHE.delete(globalKey); ORI_CACHE.set(globalKey, enCache); // pasa a "usada recién"
+    piece._oriKey=key; piece._oris=enCache;
+    return enCache;
+  }
   const src = piece.fast || piece.points;
   const hasEngrave = piece.engraveLoops && piece.engraveLoops.length;
   const hasHoles = piece.holes && piece.holes.length;
@@ -64,8 +120,9 @@ async function buildOrientations(piece, cell, grow, angles, mirrors){
   // solo suman tiempo de búsqueda por cada pieza que las evalúa.
   const capped = oris.length>ORI_CAP ? oris.slice(0,ORI_CAP) : oris;
   piece._oriKey=key; piece._oris=capped;
+  if(globalKey){
+    ORI_CACHE.set(globalKey, capped);
+    if(ORI_CACHE.size>ORI_CACHE_MAX) ORI_CACHE.delete(ORI_CACHE.keys().next().value);
+  }
   return capped;
 }
-
-/* Chapa = occupancy + prefix sums por fila (para colisión O(1) por span)
-   + skyline (altura ocupada máx. por columna) para saltar filas imposibles. */

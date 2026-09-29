@@ -90,6 +90,18 @@ const REORDER_FNS = {
   free: function(job){ return shuffleArray(job.slice()); }
 };
 
+/* Registro de una pieza ya colocada en una chapa (lo que después dibujan
+   el render, el PDF y el DXF) — mismo formato desde la pasada completa
+   (placeJobPure) y desde el repack de una chapa (repackSingleChapa). */
+function placedRecord(item, o, ox, oy, cell){
+  return {
+    pieceId:item.pieceId, name:item.name, color:item.color, area:item.area,
+    x: ox*cell + o.offX,
+    y: oy*cell + o.offY,
+    rot:o.rot, mirror:o.mirror, rp:o.rp, engrave:o.engrave||null, holes:o.holes||null
+  };
+}
+
 /* Núcleo PURO de una pasada de nesting: no lee `pieces` ni ningún otro
    global, no toca el DOM — recibe todo por parámetro y devuelve el
    resultado. Esto es justo lo que hace falta para poder correrlo tal cual,
@@ -173,12 +185,7 @@ async function placeJobPure(pieceDefs, sheetW, chapaLen, cell, grow, angles, mir
     const o=best.o;
     commitPlacement(chapa, o, best.ox, best.oy);
     chapa.free -= o.n;
-    chapa.placed.push({
-      pieceId:item.pieceId, name:item.name, color:item.color, area:item.area,
-      x: best.ox*cell + o.offX,
-      y: best.oy*cell + o.offY,
-      rot:o.rot, mirror:o.mirror, rp:o.rp, engrave:o.engrave||null, holes:o.holes||null
-    });
+    chapa.placed.push(placedRecord(item, o, best.ox, best.oy, cell));
   }
 
   return {chapas, unplaced, jobCount: jobOrdered.length};
@@ -189,6 +196,16 @@ async function placeJobPure(pieceDefs, sheetW, chapaLen, cell, grow, angles, mir
    todo a placeJobPure — primero intenta correrlo en el Web Worker (no
    traba la pestaña ni un instante); si el Worker no está disponible o
    falla, sigue en el hilo principal con la misma función, como siempre. */
+/* Copia liviana de una pieza para mandarle al Web Worker (postMessage
+   solo acepta datos). OJO: tiene que incluir "fast" (contorno de
+   colisión), "engraveLoops" y "holes" — hubo un bug real por no
+   mandarlos: el grabado y los agujeros se perdían en silencio en toda
+   pasada que saliera del Worker. Un solo lugar para no volver a olvidar
+   un campo en alguno de los dos caminos (pasada completa y repack). */
+function pieceDefForWorker(p){
+  return {id:p.id, name:p.name, points:p.points, fast:p.fast||null, bbox:p.bbox, area:p.area, color:p.color, engraveLoops:p.engraveLoops||null, holes:p.holes||null};
+}
+
 async function runNestingPass(cfg){
   const {sheetW, chapaLen, cell, grow, angles, mirrors, deep, reorderName, deadline} = cfg;
   const pieceDefs = pieces.filter(p=>p.points && p.qty>0);
@@ -200,13 +217,7 @@ async function runNestingPass(cfg){
     // SU propio deadline al recibirlo.
     const deadlineMsFromNow = (typeof deadline==='number' && isFinite(deadline)) ? Math.max(0, deadline - performance.now()) : undefined;
     const viaWorker = await runInWorker({
-      // OJO: antes esto NO mandaba "fast" (contorno simplificado para
-      // colisión), "engraveLoops" ni "holes" — cualquier pasada que
-      // saliera bien del Worker (el camino normal, cuando está
-      // disponible) perdía en silencio el grabado y los agujeros de
-      // TODAS las piezas que los tuvieran, porque buildOrientations
-      // adentro del Worker nunca los veía. Ahora se mandan completos.
-      pieceDefs: pieceDefs.map(p=>({id:p.id, name:p.name, points:p.points, fast:p.fast||null, bbox:p.bbox, area:p.area, qty:p.qty, color:p.color, engraveLoops:p.engraveLoops||null, holes:p.holes||null})),
+      pieceDefs: pieceDefs.map(p=>Object.assign(pieceDefForWorker(p), {qty:p.qty})),
       sheetW, chapaLen, cell, grow, angles, mirrors, deep, reorderName: reorderName||null, oriCap: ORI_CAP, deadlineMsFromNow
     });
     if(viaWorker) return viaWorker;
@@ -241,7 +252,7 @@ async function runRepackPass(chapa, GW, GH, deep, budget, cell, grow, angles, mi
     const def = pieces.find(pp=>pp.id===p.pieceId);
     return {
       pieceId: p.pieceId,
-      def: def ? {id:def.id, name:def.name, points:def.points, fast:def.fast||null, bbox:def.bbox, area:def.area, color:def.color, engraveLoops:def.engraveLoops||null, holes:def.holes||null} : null,
+      def: def ? pieceDefForWorker(def) : null,
       color:p.color, area:p.area, name:p.name
     };
   });
@@ -307,11 +318,7 @@ async function repackSingleChapa(items, GW, GH, deep, budget, cell, deadline){
       const placement = findBestPlacement(ch, item.oris, deep, budget, true);
       if(!placement){ ok=false; break; }
       commitPlacement(ch, placement.o, placement.ox, placement.oy);
-      ch.placed.push({
-        pieceId:item.pieceId, name:item.name, color:item.color, area:item.area,
-        x: placement.ox*cell + placement.o.offX, y: placement.oy*cell + placement.o.offY,
-        rot: placement.o.rot, mirror: placement.o.mirror, rp: placement.o.rp, engrave: placement.o.engrave||null, holes: placement.o.holes||null
-      });
+      ch.placed.push(placedRecord(item, placement.o, placement.ox, placement.oy, cell));
     }
     if(ok){
       const used = chapaUsedLen(ch);
@@ -330,6 +337,3 @@ async function repackSingleChapa(items, GW, GH, deep, budget, cell, deadline){
   }
   return best ? best.ch : null;
 }
-/* Puntaje de un resultado, para que el sistema compare pasos de rotación
-   y elija el que mejor optimización da: primero menos piezas sin ubicar,
-   luego menos chapas usadas, luego mejor aprovechamiento de material. */

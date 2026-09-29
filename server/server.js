@@ -135,10 +135,22 @@ app.use('/img', express.static(path.join(__dirname, '..', 'img')));
 // no cualquiera puede leer o escribir tus órdenes. Si dejás API_TOKEN
 // vacío (como viene por defecto), no se pide nada, para no complicar el
 // arranque inicial.
+/* Compara dos secretos (clave del puente, contraseña) en tiempo
+   constante: con un === común, lo que tarda la comparación depende de
+   cuántos caracteres del principio coinciden, y eso se puede medir desde
+   la red para ir adivinando la clave de a un carácter. Mismo resultado
+   (true/false) que el === de antes. */
+function secretoIgual(recibido, esperado){
+  const a = Buffer.from(String(recibido==null ? '' : recibido), 'utf8');
+  const b = Buffer.from(String(esperado), 'utf8');
+  if(a.length !== b.length){ crypto.timingSafeEqual(b, b); return false; }
+  return crypto.timingSafeEqual(a, b);
+}
+
 app.use((req, res, next)=>{
   const token = process.env.API_TOKEN;
   if(!token) return next(); // sin clave configurada, no se exige nada
-  if(req.get('x-api-token')===token) return next();
+  if(secretoIgual(req.get('x-api-token'), token)) return next();
   res.status(401).json({ error: 'falta o no coincide x-api-token' });
 });
 
@@ -186,7 +198,8 @@ app.post('/api/login', (req, res) => {
   if(!usuarios.size){
     return res.status(501).json({ error: 'AUTH_USUARIOS no está configurado en el .env del puente todavía.' });
   }
-  if(!usuario || !clave || usuarios.get(String(usuario).trim()) !== String(clave)){
+  const claveEsperada = usuario ? usuarios.get(String(usuario).trim()) : undefined;
+  if(!usuario || !clave || claveEsperada===undefined || !secretoIgual(clave, claveEsperada)){
     return res.status(401).json({ error: 'usuario o contraseña incorrectos' });
   }
   const token = crypto.randomBytes(24).toString('hex');
@@ -296,18 +309,39 @@ function getPoolCalendario(){
   return poolCalendarioPromise;
 }
 
+/* SQL Server acepta como máximo 2100 parámetros por consulta — un
+   "IN (@p0, @p1, ...)" con más órdenes que eso falla entero. Antes, con
+   una lista de corte grande, eso hacía que traerPuestosDeTrabajo cayera
+   al catch, devolviera {} y el filtro de Puestodetrabajo escondiera en
+   silencio TODAS las órdenes. Ahora las listas largas se consultan por
+   tandas y se juntan los resultados — con listas chicas (una sola tanda)
+   es exactamente la misma consulta que antes. */
+const MAX_PARAMS_POR_CONSULTA = 1000;
+function enTandas(lista, tam){
+  const tandas = [];
+  for(let i=0; i<lista.length; i+=tam) tandas.push(lista.slice(i, i+tam));
+  return tandas;
+}
+/* Arma "@prefijo0,@prefijo1,..." registrando cada valor como parámetro
+   VarChar del request — el patrón de siempre para los IN dinámicos. */
+function placeholdersIn(request, prefijo, valores){
+  return valores.map((v,i)=>{ request.input(prefijo+i, sql.VarChar, String(v)); return '@'+prefijo+i; }).join(',');
+}
+
 async function traerPuestosDeTrabajo(ordenes){
   if(!dbConfigCalendario || !ordenes.length) return {};
   try {
     const pool = await getPoolCalendario();
-    const request = pool.request();
-    const placeholders = ordenes.map((o,i)=>{ request.input('cal'+i, sql.VarChar, String(o)); return '@cal'+i; }).join(',');
     const cfg = queries.puestoDeTrabajo;
-    const result = await request.query(
-      `SELECT ${cfg.columnaOrden} AS orden, ${cfg.columnaPuesto} AS puesto FROM ${cfg.tabla} WHERE ${cfg.columnaOrden} IN (${placeholders})`
-    );
     const mapa = {};
-    result.recordset.forEach(r=>{ mapa[String(r.orden)] = r.puesto; });
+    for(const tanda of enTandas(ordenes, MAX_PARAMS_POR_CONSULTA)){
+      const request = pool.request();
+      const placeholders = placeholdersIn(request, 'cal', tanda);
+      const result = await request.query(
+        `SELECT ${cfg.columnaOrden} AS orden, ${cfg.columnaPuesto} AS puesto FROM ${cfg.tabla} WHERE ${cfg.columnaOrden} IN (${placeholders})`
+      );
+      result.recordset.forEach(r=>{ mapa[String(r.orden)] = r.puesto; });
+    }
     return mapa;
   } catch(err){
     console.error('[puesto-de-trabajo]', err.message);
@@ -348,7 +382,7 @@ async function traerOrdenesConZferEspecial(){
   try {
     const pool = await getPoolCalendario();
     const request = pool.request();
-    const placeholders = ZFER_INCLUIR.map((z,i)=>{ request.input('zfer'+i, sql.VarChar, z); return '@zfer'+i; }).join(',');
+    const placeholders = placeholdersIn(request, 'zfer', ZFER_INCLUIR);
     const result = await request
       .query(`SELECT DISTINCT ${cfg.columnaOrden} AS orden FROM ${cfg.tabla} WHERE ${cfg.columnaZfer} IN (${placeholders})`);
     return result.recordset.map(r=>String(r.orden));
@@ -370,12 +404,16 @@ async function buscarOrdenesPorSerial(seriales, operacion){
   if(!seriales.length || !queries.ordenesPorSerialLista) return [];
   try {
     const pool = await getPool();
-    const request = pool.request();
-    const placeholders = seriales.map((s,i)=>{ request.input('zs'+i, sql.VarChar, s); return '@zs'+i; }).join(',');
-    request.input('opFiltro', sql.VarChar, operacion);
-    const query = queries.ordenesPorSerialLista.replace('{{LISTA}}', placeholders);
-    const result = await request.query(query);
-    return result.recordset;
+    let filas = [];
+    for(const tanda of enTandas(seriales, MAX_PARAMS_POR_CONSULTA)){
+      const request = pool.request();
+      const placeholders = placeholdersIn(request, 'zs', tanda);
+      request.input('opFiltro', sql.VarChar, operacion);
+      const query = queries.ordenesPorSerialLista.replace('{{LISTA}}', placeholders);
+      const result = await request.query(query);
+      filas = filas.concat(result.recordset);
+    }
+    return filas;
   } catch(err){
     console.error('[ordenes-por-serial-lista]', err.message);
     return [];
@@ -484,16 +522,40 @@ const RACK_SIMULADO_PATH = path.join(__dirname, 'rack-simulado.json');
 const RACK_LETRAS = ['A','B','C','D','E','F','G'];
 const RACK_POR_LETRA = 20;
 
-function leerRackSimulado(){
+/* Lee una lista guardada en un JSON de esta carpeta. Si el archivo
+   todavía no existe (primera vez) o está vacío, devuelve [] como
+   siempre — pero si EXISTE con contenido y no se puede parsear, TIRA
+   ERROR en vez de devolver []. Antes, un archivo a medio escribir (corte
+   de luz, antivirus bloqueándolo) se leía como "rack vacío", y la
+   siguiente orden que entraba al rack lo pisaba con esa lista vacía + 1:
+   se perdía el rack entero (o el historial entero) sin ningún aviso. */
+function leerListaJson(ruta){
+  let texto;
+  try { texto = fs.readFileSync(ruta, 'utf8'); }
+  catch(e){ if(e.code==='ENOENT') return []; throw e; }
+  if(!texto.trim()) return [];
+  try { return JSON.parse(texto); }
+  catch(e){ throw new Error(`${path.basename(ruta)} está dañado (no es JSON válido) — no se toca para no perder datos; revisalo o restauralo a mano`); }
+}
+/* Escritura atómica: se escribe a un temporal al lado y se renombra
+   encima (en el mismo disco, el renombre es atómico) — el archivo queda
+   con el contenido viejo entero o con el nuevo entero, nunca a medias.
+   Si Windows no deja renombrar (por ej. el antivirus tiene el archivo
+   abierto en ese instante), se escribe directo como antes. */
+function escribirListaJson(ruta, lista){
+  const texto = JSON.stringify(lista, null, 2);
+  const tmp = ruta + '.tmp';
   try {
-    return JSON.parse(fs.readFileSync(RACK_SIMULADO_PATH, 'utf8'));
+    fs.writeFileSync(tmp, texto, 'utf8');
+    fs.renameSync(tmp, ruta);
   } catch(e){
-    return []; // primera vez (todavía no existe el archivo) o quedó corrupto — arranca vacío
+    try { fs.unlinkSync(tmp); } catch(_){ /* puede no existir */ }
+    fs.writeFileSync(ruta, texto, 'utf8');
   }
 }
-function guardarRackSimulado(lista){
-  fs.writeFileSync(RACK_SIMULADO_PATH, JSON.stringify(lista, null, 2), 'utf8');
-}
+
+function leerRackSimulado(){ return leerListaJson(RACK_SIMULADO_PATH); }
+function guardarRackSimulado(lista){ escribirListaJson(RACK_SIMULADO_PATH, lista); }
 function proximaUbicacionLibre(lista){
   const ocupadas = new Set(lista.map(o=>o.ubicacion));
   for(const letra of RACK_LETRAS){
@@ -511,17 +573,19 @@ function proximaUbicacionLibre(lista){
    archivo, en la misma carpeta, y solo crece (nunca se reescriben
    filas viejas, solo se agrega una nueva al final). */
 const RACK_HISTORIAL_PATH = path.join(__dirname, 'rack-historial.json');
-function leerHistorial(){
-  try {
-    return JSON.parse(fs.readFileSync(RACK_HISTORIAL_PATH, 'utf8'));
-  } catch(e){
-    return [];
-  }
-}
+function leerHistorial(){ return leerListaJson(RACK_HISTORIAL_PATH); }
+/* El rack (rack-simulado.json) es lo que manda: si el historial no se
+   puede leer, se avisa en consola y se saltea ESTE registro — sin pisar
+   el archivo dañado (se puede recuperar a mano) y sin hacer fallar la
+   operación sobre el rack, que ya quedó guardada. */
 function agregarAlHistorial(entrada){
-  const historial = leerHistorial();
-  historial.push({ ...entrada, fecha: new Date().toISOString() });
-  fs.writeFileSync(RACK_HISTORIAL_PATH, JSON.stringify(historial, null, 2), 'utf8');
+  try {
+    const historial = leerHistorial();
+    historial.push({ ...entrada, fecha: new Date().toISOString() });
+    escribirListaJson(RACK_HISTORIAL_PATH, historial);
+  } catch(err){
+    console.error('[historial] no se registró el evento:', err.message, entrada);
+  }
 }
 function esHoy(fechaISO){
   const hoy = new Date();
@@ -856,6 +920,16 @@ app.post('/api/rack/:orden/salida', exigirLogin, bloquearSiSoloLectura, async (r
 });
 
 app.get('/api/salud', (req, res) => res.json({ ok: true, hora: new Date().toISOString() }));
+
+/* Cualquier error que se escape de un endpoint (por ej. un JSON del rack
+   dañado, ver leerListaJson, o el rechazo de CORS) contesta JSON con un
+   mensaje corto — antes caía en el manejador por defecto de Express, que
+   devuelve una página HTML con el stack trace completo a quien preguntó. */
+app.use((err, req, res, next) => {
+  console.error(`[error] ${req.method} ${req.originalUrl}:`, err.message);
+  if(res.headersSent) return next(err);
+  res.status(500).json({ error: err.message });
+});
 
 /* Sin decirle una dirección puntual, Node ya escucha en TODAS las
    direcciones de red de esta PC (no solo localhost) — así que las otras

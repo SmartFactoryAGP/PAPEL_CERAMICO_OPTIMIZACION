@@ -6,7 +6,7 @@ function polyBBox(pts){
   for(const [x,y] of pts){if(x<minx)minx=x;if(y<miny)miny=y;if(x>maxx)maxx=x;if(y>maxy)maxy=y;}
   return {minx,miny,maxx,maxy,w:maxx-minx,h:maxy-miny};
 }
-/* rotación + espejo opcional, siempre normalizado a origen (0,0) */
+/* punto dentro de polígono (ray casting) */
 function pip(px,py,poly){
   let inside=false;
   for(let i=0,j=poly.length-1;i<poly.length;j=i++){
@@ -138,8 +138,3 @@ function cellsToRowSpans(cells, gw, gh){
   }
   return {rows, total};
 }
-
-/* Construye y cachea las máscaras por orientación. */
-// tope de orientaciones evaluadas por pieza: ya vienen ordenadas de la más
-// compacta a la más "desperdiciada", así que recortar la cola casi no cuesta
-// calidad y evita que una pieza con muchos ángulos únicos frene todo el cálculo.

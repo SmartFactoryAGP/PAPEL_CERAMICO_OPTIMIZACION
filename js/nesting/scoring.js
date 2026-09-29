@@ -1,3 +1,9 @@
+/* =========================================================
+   MÉTRICAS Y AGRUPACIÓN
+   ========================================================= */
+/* Puntaje de un resultado, para que el sistema compare pasos de rotación
+   y elija el que mejor optimización da: primero menos piezas sin ubicar,
+   luego menos chapas usadas, luego mejor aprovechamiento de material. */
 function scorePass(res, sheetW, chapaLen){
   const numChapas = res.chapas.length;
   const totalArea = res.chapas.reduce((s,c)=>s+c.placed.reduce((s2,p)=>s2+p.area,0),0);
@@ -83,7 +89,3 @@ function groupChapas(chapas, idMap){
 function countMirrored(chapas){
   return chapas.reduce((s,c)=>s+c.placed.filter(p=>p.mirror).length,0);
 }
-
-/* =========================================================
-   DIBUJO DE CHAPA (pantalla y PDF)
-   ========================================================= */

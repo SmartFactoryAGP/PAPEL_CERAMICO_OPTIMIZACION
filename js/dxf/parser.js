@@ -1,3 +1,6 @@
+/* =========================================================
+   PARSER DXF MÍNIMO
+   ========================================================= */
 function parseDXFEntities(text){
   const lines = text.split(/\r\n|\r|\n/);
   const pairs = [];
@@ -169,11 +172,12 @@ function chainSegments(segs, eps){
   }
   return loops;
 }
-function extractLoops(entities){
-  const loops=[], soup=[];
-  for(const ent of entities){
-    const g = entityToGeom(ent);
-    if(!g || !g.pts || g.pts.length<2) continue;
+/* Contornos cerrados a partir de geometrías sueltas: lo que ya viene
+   cerrado se usa tal cual, y todo lo abierto (líneas, arcos, polilíneas
+   sin cerrar) se encadena por extremos para ver si forma algún cierre. */
+function geomsToClosedLoops(geoms){
+  const loops = [], soup = [];
+  geoms.forEach(g=>{
     if(g.type==='loop'){
       if(g.closed || closeEnough(g.pts[0], g.pts[g.pts.length-1], 0.5)) loops.push(g.pts);
       else for(let k=0;k<g.pts.length-1;k++) soup.push({p1:g.pts[k],p2:g.pts[k+1]});
@@ -182,16 +186,9 @@ function extractLoops(entities){
     } else if(g.type==='open'){
       for(let k=0;k<g.pts.length-1;k++) soup.push({p1:g.pts[k],p2:g.pts[k+1]});
     }
-  }
+  });
   loops.push(...chainSegments(soup, 0.5));
   return loops;
-}
-function extractMainPolygon(text){
-  const entities = parseDXFEntities(text);
-  const loops = extractLoops(entities);
-  if(!loops.length) return null;
-  loops.sort((a,b)=>polyArea(b)-polyArea(a));
-  return normalize(loops[0]);
 }
 
 /* ============ Bloque 4: capas por tipo de operación (Corte / Grabado) ============
@@ -244,18 +241,7 @@ function buildLayeredGeometry(entities, layerMap){
 
   // el contorno de corte sí tiene que cerrar, como siempre: encadena lo
   // suelto y se queda con el más grande entre lo que forme un cierre.
-  const cutLoops = [], soup = [];
-  cutGeoms.forEach(g=>{
-    if(g.type==='loop'){
-      if(g.closed || closeEnough(g.pts[0], g.pts[g.pts.length-1], 0.5)) cutLoops.push(g.pts);
-      else for(let k=0;k<g.pts.length-1;k++) soup.push({p1:g.pts[k],p2:g.pts[k+1]});
-    } else if(g.type==='segment'){
-      soup.push({p1:g.p1,p2:g.p2});
-    } else if(g.type==='open'){
-      for(let k=0;k<g.pts.length-1;k++) soup.push({p1:g.pts[k],p2:g.pts[k+1]});
-    }
-  });
-  cutLoops.push(...chainSegments(soup, 0.5));
+  const cutLoops = geomsToClosedLoops(cutGeoms);
   if(!cutLoops.length) return null;
   cutLoops.sort((a,b)=>polyArea(b)-polyArea(a));
   const bb = polyBBox(cutLoops[0]);
@@ -281,7 +267,3 @@ function buildLayeredGeometry(entities, layerMap){
   }
   return { mainPoly, engraveLoops, holes };
 }
-
-/* =========================================================
-   ESTADO
-   ========================================================= */

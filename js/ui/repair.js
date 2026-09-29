@@ -870,23 +870,16 @@ function repairHandleFiles(fileList){
 document.getElementById('repairDownloadBtn').addEventListener('click', ()=>{
   const loops = repairBuildLoops();
   if(!loops.length){ alert('No se encontró ningún contorno cerrado para exportar.'); return; }
-  let dxf = '0\nSECTION\n2\nHEADER\n9\n$INSUNITS\n70\n4\n0\nENDSEC\n0\nSECTION\n2\nENTITIES\n';
+  let dxf = DXF_HEADER;
   loops.forEach((loop,i)=>{ dxf += dxfPoly(loop, safeLayer(repairState.fileBase+'_'+(i+1))); });
-  dxf += '0\nENDSEC\n0\nEOF\n';
+  dxf += DXF_FOOTER;
   downloadBlob(dxf, `${repairState.fileBase}.dxf`, 'application/dxf');
 });
 document.getElementById('repairSendBtn').addEventListener('click', ()=>{
   const loops = repairBuildLoops();
   if(!loops.length){ alert('No se encontró ningún contorno cerrado para exportar.'); return; }
   loops.sort((a,b)=>polyArea(b)-polyArea(a));
-  const poly = loops[0];
-  pieces.push({
-    id: 'p'+Date.now()+Math.random().toString(16).slice(2,6),
-    name: repairState.fileBase,
-    points: poly, fast: simplify(poly, 0.8), bbox: polyBBox(poly),
-    area: polyArea(poly), perimeter: polyPerimeter(poly),
-    qty: 1, color: PALETTE[pieces.length % PALETTE.length], error:null
-  });
+  pieces.push(createPiece(newPieceId(), repairState.fileBase, loops[0]));
   renderPieceTable();
   switchView('nesting');
 });

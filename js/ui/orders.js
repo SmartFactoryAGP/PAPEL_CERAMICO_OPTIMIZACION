@@ -181,6 +181,17 @@ function ordEncabezadoOrdenable(col){
   const flecha = activo ? (ordSort.dir===-1 ? ' ▼' : ' ▲') : '';
   return `<th data-campo="${col.campo}" class="${activo?'ordSortActivo':''}" title="Tocá para ordenar">${col.etiqueta}${flecha}</th>`;
 }
+/* Las celdas de datos de una orden, en el orden de ORD_COLUMNAS — las
+   comparten "Lista de corte" y "Lote actual" (antes cada tabla tenía su
+   propia copia a mano de las 9 columnas). Todo valor viene de SQL, así
+   que pasa siempre por escapeHtml. Ordem_Serial se muestra tal cual (sin
+   el "—" de relleno), igual que antes. */
+function ordCeldasHtml(o){
+  return ORD_COLUMNAS.map(c=>{
+    const v = c.campo==='Ordem_Serial' ? o.Ordem_Serial : (o[c.campo]||'—');
+    return `<td>${escapeHtml(v)}</td>`;
+  }).join('\n      ');
+}
 
 function ordRenderTabla(){
   const wrap = document.getElementById('ordTableWrap');
@@ -210,16 +221,8 @@ function ordRenderTabla(){
   const headerHtml = ORD_COLUMNAS.map(ordEncabezadoOrdenable).join('');
   const rows = ordenadas.map(o=>`
     <tr>
-      <td>${o.Ordem_Serial}</td>
-      <td>${o.Operation||'—'}</td>
-      <td>${o.Puestodetrabajo||'—'}</td>
-      <td>${o.ClaveModelo||'—'}</td>
-      <td>${o.CodMat||'—'}</td>
-      <td>${o.Name||'—'}</td>
-      <td>${o.ZTipo||'—'}</td>
-      <td>${o.Descricao||'—'}</td>
-      <td>${o.ARCHIVO||'—'}</td>
-      <td><button class="secondary ordAddBtn" data-orden="${o.Ordem_Serial}" style="padding:4px 9px;font-size:11px;white-space:nowrap">+ Lote</button></td>
+      ${ordCeldasHtml(o)}
+      <td><button class="secondary ordAddBtn" data-orden="${escapeHtml(o.Ordem_Serial)}" style="padding:4px 9px;font-size:11px;white-space:nowrap">+ Lote</button></td>
     </tr>`).join('');
   wrap.innerHTML = `<table class="ordTable">
     <thead><tr>${headerHtml}<th></th></tr></thead>
@@ -248,17 +251,9 @@ function ordRenderLote(){
         ? '<span style="color:var(--warn,#f87171);font-weight:700">⚠ sin ubicar</span>'
         : '<span style="color:var(--muted)">sin nestear todavía</span>';
     return `<tr>
-      <td>${o.Ordem_Serial}</td>
-      <td>${o.Operation||'—'}</td>
-      <td>${o.Puestodetrabajo||'—'}</td>
-      <td>${o.ClaveModelo||'—'}</td>
-      <td>${o.CodMat||'—'}</td>
-      <td>${o.Name||'—'}</td>
-      <td>${o.ZTipo||'—'}</td>
-      <td>${o.Descricao||'—'}</td>
-      <td>${o.ARCHIVO||'—'}</td>
+      ${ordCeldasHtml(o)}
       <td>${marca}</td>
-      <td><button class="secondary ordQuitarBtn" data-orden="${o.Ordem_Serial}" style="padding:4px 9px;font-size:11px;white-space:nowrap">✕ Quitar</button></td>
+      <td><button class="secondary ordQuitarBtn" data-orden="${escapeHtml(o.Ordem_Serial)}" style="padding:4px 9px;font-size:11px;white-space:nowrap">✕ Quitar</button></td>
     </tr>`;
   }).join('');
   wrap.innerHTML = `<table class="ordTable">
@@ -386,18 +381,19 @@ async function ordIngresoRapidoAlLote(){
   ordRenderLote();
   ordActualizarBotonEjecutar();
 
+  const tok0 = escapeHtml(tokens[0]);
   if(tokens.length===1 && !noEncontradas.length && !yaEstaban){
-    resultado.innerHTML = `✓ orden <b>${tokens[0]}</b> agregada al lote`;
+    resultado.innerHTML = `✓ orden <b>${tok0}</b> agregada al lote`;
     resultado.style.color = 'var(--good, #4ade80)';
     return;
   }
   if(tokens.length===1 && noEncontradas.length){
-    resultado.innerHTML = `⚠ orden <b>${tokens[0]}</b> no existe con Operation 0132 (revisá el número)`;
+    resultado.innerHTML = `⚠ orden <b>${tok0}</b> no existe con Operation 0132 (revisá el número)`;
     resultado.style.color = 'var(--warn, #f87171)';
     return;
   }
   if(tokens.length===1 && yaEstaban){
-    resultado.innerHTML = `La orden <b>${tokens[0]}</b> ya estaba en el lote`;
+    resultado.innerHTML = `La orden <b>${tok0}</b> ya estaba en el lote`;
     resultado.style.color = 'var(--muted)';
     return;
   }
@@ -405,7 +401,7 @@ async function ordIngresoRapidoAlLote(){
   const partes = [];
   partes.push(`${agregadas} agregada${agregadas===1?'':'s'} al lote`);
   if(yaEstaban) partes.push(`${yaEstaban} ya estaba${yaEstaban===1?'':'n'} en el lote`);
-  if(noEncontradas.length) partes.push(`${noEncontradas.length} no se encontró${noEncontradas.length===1?'':'aron'}: ${noEncontradas.join(', ')}`);
+  if(noEncontradas.length) partes.push(`${noEncontradas.length} no se encontró${noEncontradas.length===1?'':'aron'}: ${escapeHtml(noEncontradas.join(', '))}`);
   resultado.innerHTML = partes.join(' — ');
   resultado.style.color = noEncontradas.length ? 'var(--warn, #f87171)' : 'var(--good, #4ade80)';
 }
@@ -445,12 +441,12 @@ async function ordAgregarPorCodigoLote(){
   resultado.textContent = `Buscando el lote ${codigo}...`;
   const { ordenes, error } = await ordBuscarOrdenesDeLote(codigo);
   if(error){
-    resultado.innerHTML = `⚠ no se pudo traer el lote <b>${codigo}</b>: ${error}`;
+    resultado.innerHTML = `⚠ no se pudo traer el lote <b>${escapeHtml(codigo)}</b>: ${escapeHtml(error)}`;
     resultado.style.color = 'var(--warn, #f87171)';
     return;
   }
   if(!ordenes.length){
-    resultado.innerHTML = `El lote <b>${codigo}</b> no tiene ninguna orden con Operation 0132 (revisá el código)`;
+    resultado.innerHTML = `El lote <b>${escapeHtml(codigo)}</b> no tiene ninguna orden con Operation 0132 (revisá el código)`;
     resultado.style.color = 'var(--warn, #f87171)';
     return;
   }
@@ -520,18 +516,11 @@ async function ordEjecutarLote(){
       const layerMap = {}; layers.forEach(l=>{ layerMap[l]=guessLayerOp(l); });
       const result = buildLayeredGeometry(entities, layerMap);
       if(!result){ status.textContent = `Orden ${orden.Ordem_Serial}: sin contorno cerrado, se saltea.`; continue; }
-      const poly = result.mainPoly;
-      const engraveLoops = result.engraveLoops && result.engraveLoops.length ? result.engraveLoops : null;
-      const holes = result.holes && result.holes.length ? result.holes : null;
-      const pieza = {
-        id: 'ord'+orden.Ordem_Serial+'_'+Date.now()+Math.random().toString(16).slice(2,6),
-        name: 'Orden '+orden.Ordem_Serial,
-        points: poly, fast: simplify(poly, 0.8),
-        engraveLoops, holes,
-        bbox: polyBBox(poly), area: polyArea(poly), perimeter: polyPerimeter(poly),
-        qty: 1, color: PALETTE[pieces.length % PALETTE.length], error: null,
+      const pieza = createPiece(newPieceId('ord'+orden.Ordem_Serial+'_'), 'Orden '+orden.Ordem_Serial, result.mainPoly, {
+        engraveLoops: extrasDeGeometria(result, 'engraveLoops'),
+        holes: extrasDeGeometria(result, 'holes'),
         isOrdenLote: true
-      };
+      });
       pieces.push(pieza);
       ordLote.push({orden, pieceId: pieza.id});
     } catch(e){
@@ -719,18 +708,19 @@ async function rackBuscar(){
   if(!codigo) return;
   await rackRender(true); // fuerza traer el rack de nuevo (sin parpadeo) antes de buscar, para no comparar contra una foto vieja si justo otra PC le dio salida a algo
   const encontrado = rackListaActual.find(o=>String(o.Ordem_Serial)===codigo);
+  const codigoHtml = escapeHtml(codigo);
   resultado.style.display = 'block';
   if(encontrado){
     resultado.style.background = 'var(--good-soft, rgba(74,222,128,.15))';
     resultado.style.color = 'var(--good, #4ade80)';
-    resultado.innerHTML = `Orden <b>${codigo}</b> — está en el rack, ubicación <b style="font-family:var(--font-mono)">${encontrado.ubicacion}</b>`;
+    resultado.innerHTML = `Orden <b>${codigoHtml}</b> — está en el rack, ubicación <b style="font-family:var(--font-mono)">${escapeHtml(encontrado.ubicacion)}</b>`;
     input.value = '';
     input.focus();
     return;
   }
   resultado.style.background = 'var(--warn-soft, rgba(248,113,113,.15))';
   resultado.style.color = 'var(--warn, #f87171)';
-  resultado.innerHTML = `Orden <b>${codigo}</b> — pieza no cortada (no está en el rack)`;
+  resultado.innerHTML = `Orden <b>${codigoHtml}</b> — pieza no cortada (no está en el rack)`;
   input.value = '';
   input.focus();
 
@@ -740,9 +730,10 @@ async function rackBuscar(){
     const data = await res.json().catch(()=>({}));
     if(!res.ok || !data.encontrada) return; // nunca salió, o ya está en el rack — el mensaje de arriba alcanza
     resultado.style.background = 'var(--warn-soft, rgba(248,113,113,.15))';
-    resultado.innerHTML = `Orden <b>${codigo}</b> — no está en el rack, pero salió de la posición <b style="font-family:var(--font-mono)">${data.ubicacion}</b> el ${new Date(data.fecha).toLocaleString('es-CO')}.
+    const ubicHtml = escapeHtml(data.ubicacion);
+    resultado.innerHTML = `Orden <b>${codigoHtml}</b> — no está en el rack, pero salió de la posición <b style="font-family:var(--font-mono)">${ubicHtml}</b> el ${new Date(data.fecha).toLocaleString('es-CO')}.
       ¿Le dieron salida por error?
-      <button class="secondary rackReingresarBtn" data-orden="${codigo}" data-ubicacion="${data.ubicacion}" style="margin-top:8px;display:block;padding:6px 10px;font-size:12px">↩ Reingresar en la posición ${data.ubicacion}</button>`;
+      <button class="secondary rackReingresarBtn" data-orden="${codigoHtml}" data-ubicacion="${ubicHtml}" style="margin-top:8px;display:block;padding:6px 10px;font-size:12px">↩ Reingresar en la posición ${ubicHtml}</button>`;
   } catch(e){ /* si el puente no responde, se queda con el mensaje de "no está en el rack" nomás */ }
 }
 document.getElementById('rackBuscarInput').addEventListener('keydown', ev=>{
@@ -761,7 +752,8 @@ document.getElementById('rackBuscarResultado').addEventListener('click', ev=>{
    en server.js) y acá se muestra el motivo en vez de romper nada. */
 async function rackReingresar(ordenSerial, ubicacion){
   const resultado = document.getElementById('rackBuscarResultado');
-  resultado.innerHTML = `Reingresando la orden ${ordenSerial} en ${ubicacion}...`;
+  const serialHtml = escapeHtml(ordenSerial), ubicHtml = escapeHtml(ubicacion);
+  resultado.innerHTML = `Reingresando la orden ${serialHtml} en ${ubicHtml}...`;
   try {
     const histRes = await fetch(ordBridgeUrl()+'/api/rack-simulado/'+encodeURIComponent(ordenSerial)+'/ultima-salida', {headers: ordApiHeaders()});
     const hist = await histRes.json().catch(()=>({}));
@@ -774,11 +766,11 @@ async function rackReingresar(ordenSerial, ubicacion){
     if(!res.ok) throw new Error(data.error || ('HTTP '+res.status));
     resultado.style.background = 'var(--good-soft, rgba(74,222,128,.15))';
     resultado.style.color = 'var(--good, #4ade80)';
-    resultado.innerHTML = `Orden <b>${ordenSerial}</b> reingresada en <b style="font-family:var(--font-mono)">${ubicacion}</b>.`;
+    resultado.innerHTML = `Orden <b>${serialHtml}</b> reingresada en <b style="font-family:var(--font-mono)">${ubicHtml}</b>.`;
   } catch(e){
     resultado.style.background = 'var(--warn-soft, rgba(248,113,113,.15))';
     resultado.style.color = 'var(--warn, #f87171)';
-    resultado.innerHTML = `No se pudo reingresar la orden ${ordenSerial}: ${e.message}`;
+    resultado.innerHTML = `No se pudo reingresar la orden ${serialHtml}: ${escapeHtml(e.message)}`;
   }
   rackRender();
 }
@@ -804,7 +796,7 @@ async function rackRender(silencioso){
   } catch(e){
     if(silencioso) return; // un refresco automático que falla (por una red lenta, un timeout) no debe borrar lo que ya se estaba viendo
     document.getElementById('rackCount').textContent = '—';
-    wrap.innerHTML = `<div class="empty">No se pudo traer el rack del puente: ${e.message}</div>`;
+    wrap.innerHTML = `<div class="empty">No se pudo traer el rack del puente: ${escapeHtml(e.message)}</div>`;
     rackListaActual = [];
     return;
   }
@@ -815,23 +807,22 @@ async function rackRender(silencioso){
     wrap.innerHTML = '<div class="empty">Todavía no hay ninguna orden en el rack.</div>';
     return;
   }
-  const rows = lista.slice().reverse().map(o=>`
+  // mismas columnas que antes (el Rack muestra Centro_Trabalho y no el
+  // Archivo, a diferencia de Lista de corte) — todo valor escapado.
+  const RACK_CAMPOS = ['Operation','Centro_Trabalho','Puestodetrabajo','ClaveModelo','CodMat','Name','ZTipo','Descricao'];
+  const rows = lista.slice().reverse().map(o=>{
+    const serialHtml = escapeHtml(o.Ordem_Serial);
+    return `
     <tr>
-      <td><b style="color:var(--accent);font-family:var(--font-mono)">${o.ubicacion}</b></td>
-      <td>${o.Ordem_Serial}</td>
-      <td>${o.Operation||'—'}</td>
-      <td>${o.Centro_Trabalho||'—'}</td>
-      <td>${o.Puestodetrabajo||'—'}</td>
-      <td>${o.ClaveModelo||'—'}</td>
-      <td>${o.CodMat||'—'}</td>
-      <td>${o.Name||'—'}</td>
-      <td>${o.ZTipo||'—'}</td>
-      <td>${o.Descricao||'—'}</td>
+      <td><b style="color:var(--accent);font-family:var(--font-mono)">${escapeHtml(o.ubicacion)}</b></td>
+      <td>${serialHtml}</td>
+      ${RACK_CAMPOS.map(c=>`<td>${escapeHtml(o[c]||'—')}</td>`).join('\n      ')}
       <td style="white-space:nowrap">
-        <button class="secondary rackReimprimirBtn" data-orden="${o.Ordem_Serial}" style="padding:6px 10px;font-size:11px">🖨 Reimprimir sticker</button>
-        <button class="secondary rackSalidaBtn" data-orden="${o.Ordem_Serial}" style="padding:6px 10px;font-size:11px;margin-left:6px">Sacar del rack</button>
+        <button class="secondary rackReimprimirBtn" data-orden="${serialHtml}" style="padding:6px 10px;font-size:11px">🖨 Reimprimir sticker</button>
+        <button class="secondary rackSalidaBtn" data-orden="${serialHtml}" style="padding:6px 10px;font-size:11px;margin-left:6px">Sacar del rack</button>
       </td>
-    </tr>`).join('');
+    </tr>`;
+  }).join('');
   wrap.innerHTML = `<table class="ordTable">
     <thead><tr><th>Ubicación</th><th>Ordem_Serial</th><th>Operation</th><th>Centro_Trabalho</th><th>Puestodetrabajo</th><th>ClaveModelo</th><th>CodMat</th><th>Name</th><th>ZTipo</th><th>Descricao</th><th></th></tr></thead>
     <tbody>${rows}</tbody>

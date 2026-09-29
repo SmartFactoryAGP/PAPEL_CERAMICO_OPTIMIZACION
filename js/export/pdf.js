@@ -1,3 +1,6 @@
+/* =========================================================
+   EXPORT PDF — una hoja por diseño de corte único
+   ========================================================= */
 function exportPDF(){
   if(!lastResult || !lastResult.chapas.length){ alert('Ejecuta el nesting primero.'); return; }
   const { jsPDF } = window.jspdf;
@@ -137,9 +140,3 @@ function exportPDF(){
   doc.save(`${slug(jobName)}_reporte.pdf`);
 }
 document.getElementById('btnPdf').addEventListener('click', exportPDF);
-
-/* =========================================================
-   VISTA "REPARAR DXF" — recibe cualquier DXF (con puntos abiertos o
-   contornos mal cerrados), los marca en rojo, y deja repararlos a mano
-   o automáticamente antes de descargarlos o mandarlos al nesting.
-   ========================================================= */

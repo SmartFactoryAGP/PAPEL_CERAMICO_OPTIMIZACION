@@ -75,6 +75,16 @@ async function doNest(){
   const stripMinLen = Math.max(1, parseFloat(document.getElementById('stripMinLen').value)||120);
   const stripKerf = Math.max(0, parseFloat(document.getElementById('stripKerf').value)||0);
   let stripLayer = [];
+  const stripsArea = list => (list||[]).reduce((s,t)=>s+t.w*t.len,0);
+  const stripsCount = () => stripLayer.reduce((s,l)=>s+l.length,0);
+  // refresca la vista en vivo y las estadísticas con el mejor resultado
+  // actual + sus tiras — mismo bloque que antes estaba repetido en cada
+  // lugar donde el resultado mejora (Fase 1, tiras, Fase 2 y pulido).
+  function publishLive(){
+    const shown = withStripLayer(bestPass.chapas, stripLayer);
+    renderLive(sheetW, chapaLen, shown);
+    updateStats(sheetW, chapaLen, shown, bestPass.jobCount + stripsCount(), bestPass.unplaced.length, performance.now()-t0);
+  }
   let lastStripCount = 0;
   let lastStripRefresh = -Infinity;
   const STRIP_COOLDOWN = 800; // ms — no recalcula tiras más seguido que esto, aunque haya mejoras seguidas
@@ -151,8 +161,7 @@ async function doNest(){
     });
     if(better){
       bestPass = res; bestScore = score; bestStep = step;
-      renderLive(sheetW, chapaLen, withStripLayer(bestPass.chapas, stripLayer));
-      updateStats(sheetW, chapaLen, withStripLayer(bestPass.chapas, stripLayer), bestPass.jobCount + stripLayer.reduce((s,l)=>s+l.length,0), bestPass.unplaced.length, performance.now()-t0);
+      publishLive();
     }
   }
   if(!bestPass){ alert('No hay piezas con cantidad mayor a 0.'); return; }
@@ -160,10 +169,7 @@ async function doNest(){
   // primer cálculo de tiras, ya con el primer resultado en pantalla —
   // así no hay que esperar a la Fase 2 para verlas por primera vez.
   await refreshStrips(bestPass.chapas, true);
-  if(fillStripsOn){
-    renderLive(sheetW, chapaLen, withStripLayer(bestPass.chapas, stripLayer));
-    updateStats(sheetW, chapaLen, withStripLayer(bestPass.chapas, stripLayer), bestPass.jobCount + stripLayer.reduce((s,l)=>s+l.length,0), bestPass.unplaced.length, performance.now()-t0);
-  }
+  if(fillStripsOn) publishLive();
 
   // Fase 2: mejora continua, sin límite — igual que Libélula. Sigue
   // probando acomodos y cada vez que encuentra algo mejor actualiza la
@@ -290,8 +296,7 @@ async function doNest(){
 
     if(improved){
       await refreshStrips(bestPass.chapas, false, changedIdx!=null ? [changedIdx] : null);
-      renderLive(sheetW, chapaLen, withStripLayer(bestPass.chapas, stripLayer));
-      updateStats(sheetW, chapaLen, withStripLayer(bestPass.chapas, stripLayer), bestPass.jobCount + stripLayer.reduce((s,l)=>s+l.length,0), bestPass.unplaced.length, performance.now()-t0);
+      publishLive();
     }
     const restante = maxMinutes>0 ? ` — se detiene solo en ${Math.max(0,(deadline-performance.now())/60000).toFixed(1)} min` : ` — tocá "Detener" cuando te convenza`;
     document.getElementById('progress').textContent =
@@ -346,7 +351,7 @@ async function doNest(){
       // no se dieron ya por perdidas tras varios intentos sin éxito?
       const conHueco = bestPass.chapas
         .map((c,i)=>{
-          const usado = c.placed.reduce((s,p)=>s+p.area,0) + (stripLayer[i]||[]).reduce((s,t)=>s+t.w*t.len,0);
+          const usado = c.placed.reduce((s,p)=>s+p.area,0) + stripsArea(stripLayer[i]);
           const libre = sheetW*effChapaLen(c, chapaLen) - usado;
           return {i, libre, n:c.placed.length};
         })
@@ -378,11 +383,10 @@ async function doNest(){
       // no en cada uno (sería carísimo repetirlo cada vez).
       async function logDiagnosticoSiSeAgotaron(){
         if((intentos.get(target.i)||0) < MAX_INTENTOS_POR_CHAPA) return;
-        const stripsAntesDiag = stripLayer[target.i] || [];
-        const areaAntesDiag = stripsAntesDiag.reduce((s,t)=>s+t.w*t.len,0);
+        const areaAntesDiag = stripsArea(stripLayer[target.i]);
         const sinMinimo = await computeStripLayer([chapa], sheetW, chapaLen, cell, stripW, 1, stripKerf);
         const stripsSinMinimo = sinMinimo[0] || [];
-        const areaSinMinimo = stripsSinMinimo.reduce((s,t)=>s+t.w*t.len,0);
+        const areaSinMinimo = stripsArea(stripsSinMinimo);
         if(areaSinMinimo > areaAntesDiag + 100){ // hay diferencia real, no ruido de redondeo
           const cortas = stripsSinMinimo.filter(s=>s.len < stripMinLen);
           const masLarga = cortas.length ? Math.round(Math.max(...cortas.map(s=>s.len))) : null;
@@ -400,10 +404,10 @@ async function doNest(){
       const rep = await runRepackPass(chapa, GWp, GHp, deep, 350000, cell, grow, bestAngles, mirrors, performance.now()+700);
       if(!rep){ await logDiagnosticoSiSeAgotaron(); await new Promise(r=>setTimeout(r,0)); continue; }
       const stripsAntes = stripLayer[target.i] || [];
-      const areaAntes = stripsAntes.reduce((s,t)=>s+t.w*t.len,0);
+      const areaAntes = stripsArea(stripsAntes);
       const capaProbada = await computeStripLayer([rep], sheetW, chapaLen, cell, stripW, stripMinLen, stripKerf);
       const stripsDespues = capaProbada[0] || [];
-      const areaDespues = stripsDespues.reduce((s,t)=>s+t.w*t.len,0);
+      const areaDespues = stripsArea(stripsDespues);
       if(areaDespues > areaAntes + 1){
         bestPass.chapas[target.i] = rep;
         stripLayer[target.i] = stripsDespues;
@@ -411,8 +415,7 @@ async function doNest(){
         registerStripLayer(stripLayer);
         bestScore = scorePass(bestPass, sheetW, chapaLen);
         polishFound += Math.max(0, stripsDespues.length - stripsAntes.length);
-        renderLive(sheetW, chapaLen, withStripLayer(bestPass.chapas, stripLayer));
-        updateStats(sheetW, chapaLen, withStripLayer(bestPass.chapas, stripLayer), bestPass.jobCount + stripLayer.reduce((s,l)=>s+l.length,0), bestPass.unplaced.length, performance.now()-t0);
+        publishLive();
         logAttempt({
           label:'Pulido de tiras',
           detail:`Rearmó Chapa ${target.i+1} para poder sumarle tira(s) — antes ${stripsAntes.length} tira(s) ahí, ahora ${stripsDespues.length}`,
@@ -442,7 +445,3 @@ async function doNest(){
   renderChapas(sheetW, chapaLen, displayChapas);
   updateStats(sheetW, chapaLen, displayChapas, lastResult.jobCount, bestPass.unplaced.length, t1-t0);
 }
-
-/* =========================================================
-   MÉTRICAS Y AGRUPACIÓN
-   ========================================================= */
