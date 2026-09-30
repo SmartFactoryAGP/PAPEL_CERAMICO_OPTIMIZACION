@@ -129,6 +129,7 @@ function showLayerModal(job, posicion, total, onConfirm){
   };
 }
 
+const pieceThumbs = new WeakMap(); // pieza -> <canvas> de su miniatura ya dibujada
 function renderPieceTable(){
   const wrap = document.getElementById('pieceTable');
   const empty = document.getElementById('emptyMsg');
@@ -137,11 +138,22 @@ function renderPieceTable(){
   wrap.style.display='table'; empty.style.display='none';
   body.innerHTML='';
   const idMap = buildIdMap();
+  const frag = document.createDocumentFragment(); // las filas se arman fuera del DOM y entran de una
   pieces.forEach((p,idx)=>{
     const tr = document.createElement('tr');
     const tdThumb = document.createElement('td');
-    const canvas = document.createElement('canvas');
-    canvas.className='thumb'; canvas.width=72; canvas.height=52;
+    // la miniatura se dibuja UNA vez por pieza y se reusa: esta tabla se
+    // rearma entera en cada refresco de tiras durante el nesting, y antes
+    // volvía a dibujar la miniatura de todas las piezas cada vez.
+    // (WeakMap por objeto pieza: no se copia si alguien clona la pieza, y
+    // se libera sola cuando la pieza se borra)
+    let canvas = pieceThumbs.get(p);
+    if(!canvas){
+      canvas = document.createElement('canvas');
+      canvas.className='thumb'; canvas.width=72; canvas.height=52;
+      if(p.points) drawThumb(canvas, p.points, p.color, p.holes);
+      pieceThumbs.set(p, canvas);
+    }
     tdThumb.appendChild(canvas); tr.appendChild(tdThumb);
 
     const tdName = document.createElement('td');
@@ -179,9 +191,9 @@ function renderPieceTable(){
     rm.onclick = ()=>{ pieces.splice(idx,1); renderPieceTable(); };
     tdRm.appendChild(rm); tr.appendChild(tdRm);
 
-    body.appendChild(tr);
-    if(p.points) drawThumb(canvas, p.points, p.color, p.holes);
+    frag.appendChild(tr);
   });
+  body.appendChild(frag);
 }
 function drawThumb(canvas, pts, color, holes){
   const ctx = canvas.getContext('2d');

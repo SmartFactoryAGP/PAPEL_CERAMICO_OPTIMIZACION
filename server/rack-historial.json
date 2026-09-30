@@ -249,5 +249,175 @@
     "usuario": null,
     "evento": "salida",
     "fecha": "2026-09-29T19:54:14.496Z"
+  },
+  {
+    "Ordem_Serial": "11140514",
+    "ubicacion": "B13",
+    "usuario": "Prog1",
+    "evento": "entrada",
+    "fecha": "2026-09-29T22:41:35.868Z"
+  },
+  {
+    "Ordem_Serial": "11140515",
+    "ubicacion": "B14",
+    "usuario": "Prog1",
+    "evento": "entrada",
+    "fecha": "2026-09-29T22:41:35.896Z"
+  },
+  {
+    "Ordem_Serial": "11140516",
+    "ubicacion": "B15",
+    "usuario": "Prog1",
+    "evento": "entrada",
+    "fecha": "2026-09-29T22:41:35.920Z"
+  },
+  {
+    "Ordem_Serial": "11140517",
+    "ubicacion": "B16",
+    "usuario": "Prog1",
+    "evento": "entrada",
+    "fecha": "2026-09-29T22:41:35.940Z"
+  },
+  {
+    "Ordem_Serial": "11224310",
+    "ubicacion": "B17",
+    "usuario": "Prog1",
+    "evento": "entrada",
+    "fecha": "2026-09-29T22:41:35.960Z"
+  },
+  {
+    "Ordem_Serial": "11224311",
+    "ubicacion": "B18",
+    "usuario": "Prog1",
+    "evento": "entrada",
+    "fecha": "2026-09-29T22:41:35.984Z"
+  },
+  {
+    "Ordem_Serial": "11224312",
+    "ubicacion": "B19",
+    "usuario": "Prog1",
+    "evento": "entrada",
+    "fecha": "2026-09-29T22:41:36.011Z"
+  },
+  {
+    "Ordem_Serial": "11224313",
+    "ubicacion": "B20",
+    "usuario": "Prog1",
+    "evento": "entrada",
+    "fecha": "2026-09-29T22:41:36.030Z"
+  },
+  {
+    "Ordem_Serial": "11235770",
+    "ubicacion": "C1",
+    "usuario": "Prog1",
+    "evento": "entrada",
+    "fecha": "2026-09-29T22:41:36.051Z"
+  },
+  {
+    "Ordem_Serial": "11235771",
+    "ubicacion": "C2",
+    "usuario": "Prog1",
+    "evento": "entrada",
+    "fecha": "2026-09-29T22:41:36.073Z"
+  },
+  {
+    "Ordem_Serial": "11235771",
+    "ubicacion": "C2",
+    "orden": {
+      "Ordem_Serial": "11235771",
+      "Operation": "0132",
+      "Centro_Trabalho": "01CORTE",
+      "Puestodetrabajo": "Planeacion",
+      "ClaveModelo": "32VPMO",
+      "CodMat": "000000000100000092",
+      "Name": "12449C100",
+      "ZTipo": "Z_VDIN_0800_",
+      "Descricao": "GLASS CLEAR XYG 8.00MM",
+      "ARCHIVO": "//192.168.2.2/CNC-Revisados/BMW/BMW X5 4D U 2020/OEM/V-09 FABIAN REVISION PBS METROLOGIA/12449C100.dxf",
+      "ubicacion": "C2"
+    },
+    "usuario": null,
+    "evento": "salida",
+    "fecha": "2026-09-29T22:42:06.442Z"
+  },
+  {
+    "Ordem_Serial": "11235770",
+    "ubicacion": "C1",
+    "orden": {
+      "Ordem_Serial": "11235770",
+      "Operation": "0132",
+      "Centro_Trabalho": "01CORTE",
+      "Puestodetrabajo": "Planeacion",
+      "ClaveModelo": "32VPMO",
+      "CodMat": "000000000100000092",
+      "Name": "12449C100",
+      "ZTipo": "Z_VDIN_0800_",
+      "Descricao": "GLASS CLEAR XYG 8.00MM",
+      "ARCHIVO": "//192.168.2.2/CNC-Revisados/BMW/BMW X5 4D U 2020/OEM/V-09 FABIAN REVISION PBS METROLOGIA/12449C100.dxf",
+      "ubicacion": "C1"
+    },
+    "usuario": null,
+    "evento": "salida",
+    "fecha": "2026-09-29T22:42:20.235Z"
+  },
+  {
+    "Ordem_Serial": "11224313",
+    "ubicacion": "B20",
+    "orden": {
+      "Ordem_Serial": "11224313",
+      "Operation": "0132",
+      "Centro_Trabalho": "01CORTE",
+      "Puestodetrabajo": "Planeacion",
+      "ClaveModelo": "32VPMO",
+      "CodMat": "000000000100000092",
+      "Name": "12449C100",
+      "ZTipo": "Z_VDIN_0800_",
+      "Descricao": "GLASS CLEAR XYG 8.00MM",
+      "ARCHIVO": "//192.168.2.2/CNC-Revisados/BMW/BMW X5 4D U 2020/OEM/V-09 FABIAN REVISION PBS METROLOGIA/12449C100.dxf",
+      "ubicacion": "B20"
+    },
+    "usuario": null,
+    "evento": "salida",
+    "fecha": "2026-09-29T22:42:22.314Z"
+  },
+  {
+    "Ordem_Serial": "11388110",
+    "ubicacion": "B12",
+    "orden": {
+      "Ordem_Serial": "11388110",
+      "Operation": "0132",
+      "Centro_Trabalho": "01CORTE",
+      "Puestodetrabajo": "04SER_VT",
+      "ClaveModelo": "32VPMO",
+      "CodMat": "000000000100000091",
+      "Name": "PRO127315B109",
+      "ZTipo": "Z_VDIN_1000_",
+      "Descricao": "GLASS CLEAR XYG 10.00MM",
+      "ARCHIVO": "//192.168.2.2/cnc-revisados/MBZ/MBZ G CLASS 4D U 2019/V-15 TRASCO VPAM CL7/PRO127315B109.dxf",
+      "ubicacion": "B12"
+    },
+    "usuario": null,
+    "evento": "salida",
+    "fecha": "2026-09-29T22:42:26.085Z"
+  },
+  {
+    "Ordem_Serial": "11224312",
+    "ubicacion": "B19",
+    "orden": {
+      "Ordem_Serial": "11224312",
+      "Operation": "0132",
+      "Centro_Trabalho": "01CORTE",
+      "Puestodetrabajo": "Planeacion",
+      "ClaveModelo": "32VPMO",
+      "CodMat": "000000000100000092",
+      "Name": "12449C100",
+      "ZTipo": "Z_VDIN_0800_",
+      "Descricao": "GLASS CLEAR XYG 8.00MM",
+      "ARCHIVO": "//192.168.2.2/CNC-Revisados/BMW/BMW X5 4D U 2020/OEM/V-09 FABIAN REVISION PBS METROLOGIA/12449C100.dxf",
+      "ubicacion": "B19"
+    },
+    "usuario": null,
+    "evento": "salida",
+    "fecha": "2026-09-29T22:42:27.816Z"
   }
 ]

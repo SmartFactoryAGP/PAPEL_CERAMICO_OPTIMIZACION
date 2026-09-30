@@ -25,12 +25,12 @@
 const PURE_FN_NAMES = [
   // core/geometry.js, core/polygon.js, core/transform.js
   'polyBBox','transformPoly','rotateRaw','pip','distPointSeg','distToPoly','rasterizePoly',
-  'cellsToRowSpans','polyArea','polyPerimeter','normalize','simplify',
+  'cellKeysToRowSpans','polyArea','polyPerimeter','normalize','simplify',
   // nesting/orientation.js (+ la huella de geometría de su caché global)
-  'hashTexto','huellaGeometria','buildOrientations',
+  'hashTexto','huellaGeometria','pesoOrientaciones','oriCacheLeer','oriCacheGuardar','buildOrientations',
   // nesting/placement.js
-  'makeChapa','refreshRow','rowOccupied','rowCount','fits','contact',
-  'spanOverlap','minStartY','findBestPlacement','commitPlacement',
+  'makeChapa','refreshRow','rowOccupied','rowCount','fits','contact','contactSelfCover',
+  'spanOverlap','minStartY','buildSkylineMax','findBestPlacement','commitPlacement',
   // nesting/optimization.js
   'shuffleArray','placedRecord','placeJobPure',
   // nesting/optimization.js — repack de una chapa ("ataque dirigido"),
@@ -53,7 +53,8 @@ function buildWorkerSource(){
   // estado global que usan las funciones puras (ver orientation.js). La
   // caché de orientaciones del Worker vive mientras viva el Worker: es la
   // que evita volver a rasterizar todas las piezas en cada pasada.
-  const parts = ['"use strict";', 'let ORI_CAP = 24;', 'const ORI_CACHE = new Map();', `const ORI_CACHE_MAX = ${ORI_CACHE_MAX};`];
+  const parts = ['"use strict";', 'let ORI_CAP = 24;', 'const ORI_CACHE = {entries: new Map(), peso: 0};',
+    `const ORI_CACHE_MAX = ${ORI_CACHE_MAX};`, `const ORI_CACHE_MAX_PESO = ${ORI_CACHE_MAX_PESO};`];
   PURE_FN_NAMES.forEach(name=>{
     const fn = (typeof window!=='undefined' ? window[name] : self[name]);
     if(typeof fn !== 'function') throw new Error('falta la función pura "'+name+'" — no se pudo armar el Worker');

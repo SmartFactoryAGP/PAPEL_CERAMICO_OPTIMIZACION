@@ -125,9 +125,21 @@ app.use(express.json());
    funcionaban bien abriendo index.html con doble clic (ahí el
    navegador los lee directo del disco, sin pasar por este server). */
 app.get('/', (req, res) => res.sendFile(path.join(__dirname, '..', 'index.html')));
-app.use('/css', express.static(path.join(__dirname, '..', 'css')));
-app.use('/js', express.static(path.join(__dirname, '..', 'js')));
-app.use('/img', express.static(path.join(__dirname, '..', 'img')));
+/* Caché del navegador para los archivos estáticos: index.html los pide
+   con "?v=AAAAMMDDx" (y ese número se sube en cada actualización), así
+   que una URL versionada nunca cambia de contenido — se puede guardar un
+   año sin volver a preguntar. Antes, cada carga de la página en cada PC
+   revalidaba los ~25 archivos uno por uno. Lo que se pide SIN versión
+   (logo, favicon) se revalida como siempre. index.html nunca se cachea
+   (es el que trae las versiones nuevas). */
+const estaticoOpts = {
+  setHeaders(res){
+    if(/[?&]v=/.test(res.req.originalUrl)) res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+  }
+};
+app.use('/css', express.static(path.join(__dirname, '..', 'css'), estaticoOpts));
+app.use('/js', express.static(path.join(__dirname, '..', 'js'), estaticoOpts));
+app.use('/img', express.static(path.join(__dirname, '..', 'img'), estaticoOpts));
 
 // Clave opcional para hablarle al puente. Si completás API_TOKEN en tu
 // .env, todo pedido tiene que traer el header "x-api-token" con el mismo
@@ -435,7 +447,13 @@ function puestoPermitido(valor){
 app.get('/api/ordenes-pendientes', exigirLogin, async (req, res) => {
   try {
     const pool = await getPool();
-    const result = await pool.request().query(queries.ordenesPendientes);
+    // la consulta principal (SQL de SAGA) y la de ZFER (Calendario, OTRO
+    // servidor) no dependen una de la otra: van en paralelo, así el tiempo
+    // de respuesta es el de la más lenta y no la suma de las dos.
+    const [result, serialesZfer] = await Promise.all([
+      pool.request().query(queries.ordenesPendientes),
+      traerOrdenesConZferEspecial()
+    ]);
     let filas = result.recordset;
 
     // pedido explícito: sumar las órdenes que NO tienen Operation='0132'
@@ -444,7 +462,6 @@ app.get('/api/ordenes-pendientes', exigirLogin, async (req, res) => {
     // filtro de Puestodetrabajo permitido de abajo) una vez que se
     // juntan con las demás.
     const seriales0132 = new Set(filas.map(f=>String(f.Ordem_Serial)));
-    const serialesZfer = await traerOrdenesConZferEspecial();
     const nuevosPorZfer = serialesZfer.filter(s=>!seriales0132.has(s));
     if(nuevosPorZfer.length){
       const extra = await buscarOrdenesPorSerial(nuevosPorZfer, OPERATION_PARA_ORDENES_ZFER);
@@ -529,13 +546,31 @@ const RACK_POR_LETRA = 20;
    de luz, antivirus bloqueándolo) se leía como "rack vacío", y la
    siguiente orden que entraba al rack lo pisaba con esa lista vacía + 1:
    se perdía el rack entero (o el historial entero) sin ningún aviso. */
+/* Caché en memoria de cada archivo, validada por fecha de modificación +
+   tamaño: el Rack de cada PC pide /api/rack-simulado cada 6 s, y antes
+   cada pedido releía y parseaba el archivo del disco (y el resumen del
+   día, el historial ENTERO, que solo crece). Ahora solo se hace un stat
+   (barato); si el archivo no cambió, se usa lo ya parseado. Si alguien lo
+   edita a mano, cambia la fecha/tamaño y se vuelve a leer solo.
+   Se devuelve siempre una COPIA del arreglo: los endpoints hacen push/
+   filter sobre lo que leen, y eso no puede ensuciar la caché si después
+   la escritura falla. */
+const cacheListas = new Map(); // ruta -> {mtimeMs, size, lista}
 function leerListaJson(ruta){
-  let texto;
-  try { texto = fs.readFileSync(ruta, 'utf8'); }
-  catch(e){ if(e.code==='ENOENT') return []; throw e; }
-  if(!texto.trim()) return [];
-  try { return JSON.parse(texto); }
-  catch(e){ throw new Error(`${path.basename(ruta)} está dañado (no es JSON válido) — no se toca para no perder datos; revisalo o restauralo a mano`); }
+  let st;
+  try { st = fs.statSync(ruta); }
+  catch(e){ if(e.code==='ENOENT'){ cacheListas.delete(ruta); return []; } throw e; }
+  const c = cacheListas.get(ruta);
+  if(c && c.mtimeMs===st.mtimeMs && c.size===st.size) return c.lista.slice();
+  const texto = fs.readFileSync(ruta, 'utf8');
+  let lista;
+  if(!texto.trim()) lista = [];
+  else {
+    try { lista = JSON.parse(texto); }
+    catch(e){ throw new Error(`${path.basename(ruta)} está dañado (no es JSON válido) — no se toca para no perder datos; revisalo o restauralo a mano`); }
+  }
+  cacheListas.set(ruta, {mtimeMs: st.mtimeMs, size: st.size, lista});
+  return lista.slice();
 }
 /* Escritura atómica: se escribe a un temporal al lado y se renombra
    encima (en el mismo disco, el renombre es atómico) — el archivo queda
@@ -552,6 +587,11 @@ function escribirListaJson(ruta, lista){
     try { fs.unlinkSync(tmp); } catch(_){ /* puede no existir */ }
     fs.writeFileSync(ruta, texto, 'utf8');
   }
+  // lo que se acaba de escribir queda como caché (sin volver a parsearlo)
+  try {
+    const st = fs.statSync(ruta);
+    cacheListas.set(ruta, {mtimeMs: st.mtimeMs, size: st.size, lista: lista.slice()});
+  } catch(_){ cacheListas.delete(ruta); }
 }
 
 function leerRackSimulado(){ return leerListaJson(RACK_SIMULADO_PATH); }

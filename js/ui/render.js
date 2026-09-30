@@ -112,13 +112,43 @@ function drawChapaToCanvas(chapa, sheetW, chapaLen, idMap, pxPerMM, opts){
   return canvas;
 }
 
+/* Caché de lienzos ya dibujados en pantalla. Durante la Fase 2 la vista
+   se redibuja en cada mejora, y antes eso volvía a dibujar TODAS las
+   chapas aunque el "ataque dirigido" hubiera cambiado una sola (con 19
+   chapas, 18 dibujos tirados por vuelta). Ahora cada lienzo se identifica
+   por todo lo que dibuja; si no cambió nada, se reusa el mismo <canvas>.
+   Solo se guardan los lienzos de la última vista (se rearma el Map en cada
+   render), así que no crece con el tiempo. */
+let chapaCanvasCache = new Map();
+/* Identidad de los arreglos de geometría: rp/holes/engrave nunca se
+   modifican después de armar la orientación, así que "mismo arreglo" =
+   "misma forma" (una copia con el mismo contenido solo da un redibujo de
+   más, nunca un dibujo equivocado). */
+const geomIds = new WeakMap(); let geomNextId = 1;
+function geomId(arr){
+  if(!arr) return 0;
+  let id = geomIds.get(arr);
+  if(!id){ id = geomNextId++; geomIds.set(arr, id); }
+  return id;
+}
+function chapaDrawKey(chapa, sheetW, chapaLen, idMap, pxPerMM, effLen){
+  let k = `${sheetW}|${chapaLen}|${pxPerMM}|${effLen}`;
+  for(const p of chapa.placed){
+    k += `|${geomId(p.rp)}.${geomId(p.holes)}.${geomId(p.engrave)}:${idMap.get(p.pieceId)}:${p.x}:${p.y}:${p.rot}:${p.mirror?1:0}:${p.color}`;
+  }
+  return k;
+}
+
 function renderChapas(sheetW, chapaLen, chapas){
   const wrap = document.getElementById('chapasWrap');
   wrap.innerHTML='';
+  const prevCanvases = chapaCanvasCache;
+  chapaCanvasCache = new Map();
   if(!chapas.length){ wrap.innerHTML = '<div class="empty">Sin piezas colocadas.</div>'; return; }
   const idMap = buildIdMap();
   const groups = groupChapas(chapas, idMap);
   const pxPerMM = Math.min(320/sheetW, 340/chapaLen, 0.6);
+  const frag = document.createDocumentFragment(); // un solo agregado al DOM al final, no uno por chapa
   groups.forEach(g=>{
     const box = document.createElement('div');
     box.className='chapaBox';
@@ -131,11 +161,17 @@ function renderChapas(sheetW, chapaLen, chapas){
     const mirHtml = mir ? `<span class="mirrorTag">${mir} esp.</span>` : '';
     header.innerHTML = `<span style="color:#f1f3fb">Chapa ${g.indices.join(', ')}${repeatHtml}${mirHtml}</span><span style="color:${utilColor(pct)}">${pct.toFixed(1)}%</span>`;
     box.appendChild(header);
-    const canvas = drawChapaToCanvas(g.chapa, sheetW, chapaLen, idMap, pxPerMM, {effLen});
-    canvas.style.maxWidth='340px'; canvas.style.height='auto'; canvas.style.display='block';
+    const key = chapaDrawKey(g.chapa, sheetW, chapaLen, idMap, pxPerMM, effLen);
+    let canvas = prevCanvases.get(key);
+    if(!canvas){
+      canvas = drawChapaToCanvas(g.chapa, sheetW, chapaLen, idMap, pxPerMM, {effLen});
+      canvas.style.maxWidth='340px'; canvas.style.height='auto'; canvas.style.display='block';
+    }
+    chapaCanvasCache.set(key, canvas);
     box.appendChild(canvas);
-    wrap.appendChild(box);
+    frag.appendChild(box);
   });
+  wrap.appendChild(frag);
 }
 
 function updateStats(sheetW, chapaLen, chapas, jobCount, unplacedCount, ms){

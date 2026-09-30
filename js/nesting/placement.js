@@ -54,12 +54,12 @@ function fits(ch, o, ox, oy){
 function contact(ch, o, ox, oy){
   const {GW, GH} = ch;
   const rows=o.rows;
+  const cov = o._cov || (o._cov = contactSelfCover(o));
   let touch=0;
   for(let y=0;y<o.gh;y++){
     const spans=rows[y];
     if(!spans.length) continue;
-    const gy=oy+y;
-    const below = rows[y-1], above = rows[y+1];
+    const gy=oy+y, base=cov.off[y];
     for(let s=0;s<spans.length;s++){
       const x0=ox+spans[s][0], x1=ox+spans[s][1];
       // laterales del span
@@ -67,17 +67,38 @@ function contact(ch, o, ox, oy){
       if(x1===GW-1) touch+=2; else if(rowOccupied(ch,gy,x1+1,x1+1)) touch++;
       // abajo: sólo cuenta donde la propia pieza no se tapa a sí misma
       if(gy===0) touch += (x1-x0+1)*2;
-      else if(!below || spanOverlap(below, ox, x0, x1) < (x1-x0+1)){
-        touch += rowCount(ch, gy-1, x0, x1);
-      }
+      else if(cov.below[base+s]) touch += rowCount(ch, gy-1, x0, x1);
       // arriba
       if(gy===GH-1) touch += (x1-x0+1)*2;
-      else if(!above || spanOverlap(above, ox, x0, x1) < (x1-x0+1)){
-        touch += rowCount(ch, gy+1, x0, x1);
-      }
+      else if(cov.above[base+s]) touch += rowCount(ch, gy+1, x0, x1);
     }
   }
   return touch;
+}
+/* Para cada span de cada fila de una orientación: ¿la propia pieza lo
+   deja al descubierto por debajo / por arriba? (si lo tapa entero, ese
+   lado no puede tocar a nadie). Antes contact() lo recalculaba con
+   spanOverlap en CADA posición probada — pero no depende de la posición:
+   con los dos spans corridos en el mismo ox, el solapamiento es
+   min(b1,s1)-max(b0,s0)+1 igual, ox se cancela. Se calcula una sola vez
+   por orientación y queda guardado en ella (o._cov). Medido: contact()
+   era ~19% del tiempo total del motor. Todo en dos Uint8Array planos (un
+   byte por span) + el offset de cada fila, no un arreglo por fila: cada
+   TypedArray suelto pesa ~100 bytes de más, y una pieza grande tiene
+   cientos de filas por orientación. */
+function contactSelfCover(o){
+  const rows=o.rows, off=new Int32Array(o.gh+1);
+  for(let y=0;y<o.gh;y++) off[y+1] = off[y] + rows[y].length;
+  const below=new Uint8Array(off[o.gh]), above=new Uint8Array(off[o.gh]);
+  for(let y=0;y<o.gh;y++){
+    const spans=rows[y], b=rows[y-1], a=rows[y+1];
+    for(let s=0;s<spans.length;s++){
+      const len = spans[s][1]-spans[s][0]+1;
+      below[off[y]+s] = (!b || spanOverlap(b, 0, spans[s][0], spans[s][1]) < len) ? 1 : 0;
+      above[off[y]+s] = (!a || spanOverlap(a, 0, spans[s][0], spans[s][1]) < len) ? 1 : 0;
+    }
+  }
+  return {off, below, above};
 }
 function spanOverlap(spans, ox, x0, x1){
   let c=0;
@@ -91,18 +112,37 @@ function spanOverlap(spans, ox, x0, x1){
 
 /* Altura mínima de apoyo: la fila más baja donde la pieza puede empezar
    dado el skyline. Evita barrer filas que seguro chocan. */
-function minStartY(ch, o, ox){
+function minStartY(ch, o, ox, skyMax){
   let maxNeed = 0;
   for(let y=0;y<o.gh;y++){
     const spans=o.rows[y];
     for(let s=0;s<spans.length;s++){
-      for(let x=ox+spans[s][0]; x<=ox+spans[s][1]; x++){
-        const need = ch.skyline[x] - y;
-        if(need>maxNeed) maxNeed=need;
-      }
+      // máximo del skyline en todo el span de una sola consulta O(1) a la
+      // sparse table, en vez de recorrerlo celda por celda (mismo valor:
+      // max(sky)-y). Va escrito acá adentro (no llamando a skylineMax)
+      // porque este es el bucle más caliente del modo rápido.
+      const a = ox+spans[s][0], b = ox+spans[s][1];
+      const k = 31 - Math.clz32(b-a+1), L = skyMax[k];
+      const m1 = L[a], m2 = L[b-(1<<k)+1];
+      const need = (m1>m2 ? m1 : m2) - y;
+      if(need>maxNeed) maxNeed=need;
     }
   }
   return maxNeed<0?0:maxNeed;
+}
+/* Sparse table de máximos del skyline: nivel k guarda el máximo de cada
+   tramo de 2^k columnas. Se arma una vez por findBestPlacement (el
+   skyline no cambia mientras se busca, recién al commitear) y después
+   cualquier "máximo entre la columna a y la b" sale en O(1) (ver
+   minStartY: nivel k = log2 del largo, y dos tramos que se pisan). */
+function buildSkylineMax(ch){
+  const n=ch.GW, levels=[ch.skyline];
+  for(let k=1; (1<<k)<=n; k++){
+    const prev=levels[k-1], h=1<<(k-1), len=n-(1<<k)+1, cur=new Int32Array(len);
+    for(let i=0;i<len;i++){ const a=prev[i], b=prev[i+h]; cur[i] = a>b ? a : b; }
+    levels.push(cur);
+  }
+  return levels;
 }
 
 /* Busca la mejor posición. Barre X en pasos y, para cada X, arranca en la
@@ -127,6 +167,7 @@ function findBestPlacement(ch, oris, deep, budget, fine){
   }
   if(!viable.length) return null;
   const perOri = Math.max(1200, Math.floor(budget/viable.length));
+  const skyMax = fine ? null : buildSkylineMax(ch); // solo el modo no-fine usa minStartY
 
   for(const o of viable){
     let oTries = 0;
@@ -181,7 +222,7 @@ function findBestPlacement(ch, oris, deep, budget, fine){
           if((tries & 8191)===0 && (performance.now()-fineT0)>fineTimeCapMs){ abortOri=true; break; }
         }
       } else {
-        const y0 = minStartY(ch, o, ox);
+        const y0 = minStartY(ch, o, ox, skyMax);
         if(y0 <= GH-o.gh){
           for(let oy=y0; oy<=GH-o.gh; oy++){
             oTries++; tries++;

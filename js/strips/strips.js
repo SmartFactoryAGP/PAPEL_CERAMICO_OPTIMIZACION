@@ -35,9 +35,17 @@ function cloneChapaForScratch(chapa){
    vecinas. Medido con los mismos datos reales: de ~24s a manos de 1s
    para las 19 chapas juntas, encontrando exactamente las mismas tiras. */
 function buildFreeRunUp(ch){
+  const run = new Int32Array(ch.GW*ch.GH);
+  updateFreeRunUp(ch, run, 0, ch.GW-1);
+  return run;
+}
+/* Recalcula "run" solo en las columnas [x0..x1]: al commitear una tira
+   solo cambia la ocupación de SUS columnas, y el run de cada columna
+   depende únicamente de esa columna — antes se rehacía la grilla entera
+   (millones de celdas) después de cada tira. Mismo contenido exacto. */
+function updateFreeRunUp(ch, run, x0, x1){
   const {GW, GH, occ} = ch;
-  const run = new Int32Array(GW*GH);
-  for(let x=0; x<GW; x++){
+  for(let x=x0; x<=x1; x++){
     let r=0;
     for(let y=0; y<GH; y++){
       const idx = y*GW+x;
@@ -45,7 +53,6 @@ function buildFreeRunUp(ch){
       run[idx] = r;
     }
   }
-  return run;
 }
 /* Encuentra la posición de MENOR oy (y, a igual oy, menor ox) donde un
    rectángulo libre de gw x gh celdas entra, usando "run" de arriba.
@@ -75,12 +82,20 @@ function findRectFit(run, GW, GH, gw, gh, dequeBuf){
    por bisección en vez de una lista fija de tamaños, para acercarse de
    verdad al máximo que el hueco permite. "run" (buildFreeRunUp) se arma
    una sola vez por chapa, afuera, y se reutiliza en los 12 pasos. */
-async function findLongestStripFit(run, GW, GH, stripW, stripMinLen, capLen, cell, grow, angles, mirrors, dequeBuf){
+async function findLongestStripFit(run, GW, GH, stripW, stripMinLen, capLen, cell, grow, angles, mirrors, dequeBuf, rectOris){
   let lo = stripMinLen, hi = capLen, found = null;
   for(let iter=0; iter<12 && lo<=hi; iter++){
     const mid = Math.round((lo+hi)/2);
-    const rect = [[0,0],[stripW,0],[stripW,mid],[0,mid]];
-    const oris = await buildOrientations({points:rect, bbox:{minx:0,miny:0,maxx:stripW,maxy:mid,w:stripW,h:mid}}, cell, grow, angles, mirrors);
+    // la bisección pide casi siempre los mismos largos (misma secuencia de
+    // lo/hi) tira tras tira y chapa tras chapa: las orientaciones de cada
+    // rectángulo de prueba se arman una sola vez por llamada a
+    // computeStripLayer (rectOris), en vez de rasterizarlo de nuevo cada vez.
+    let oris = rectOris && rectOris.get(mid);
+    if(!oris){
+      const rect = [[0,0],[stripW,0],[stripW,mid],[0,mid]];
+      oris = await buildOrientations({points:rect, bbox:{minx:0,miny:0,maxx:stripW,maxy:mid,w:stripW,h:mid}}, cell, grow, angles, mirrors);
+      if(rectOris) rectOris.set(mid, oris);
+    }
     // se prueban las orientaciones viables (por lo general 2: acostada y
     // parada) y se toma la de menor oy (y, a igualdad, menor ox) — mismo
     // criterio de "lo más apretado hacia arriba" que ya usaba la app.
@@ -115,6 +130,7 @@ async function computeStripLayer(chapas, sheetW, chapaLen, cell, stripW, stripMi
   const capLen = Math.max(stripMinLen, sheetW, chapaLen);
 
   const layer = chapas.map(()=>[]);
+  const rectOris = new Map(); // largo -> orientaciones del rectángulo de prueba (ver findLongestStripFit)
   for(let ci=0; ci<chapas.length; ci++){
     const scratch = cloneChapaForScratch(chapas[ci]);
     const boundYcells = Math.min(scratch.GH, Math.max(0, Math.ceil(effChapaLen(chapas[ci], chapaLen)/cell)));
@@ -134,11 +150,12 @@ async function computeStripLayer(chapas, sheetW, chapaLen, cell, stripW, stripMi
     // bien fragmentada (muchos recortes chicos) se puede necesitar más.
     let guard=0;
     while(guard++<250){
-      const found = await findLongestStripFit(run, scratch.GW, scratch.GH, stripW, stripMinLen, capLen, cell, grow, angles, mirrors, dequeBuf);
+      const found = await findLongestStripFit(run, scratch.GW, scratch.GH, stripW, stripMinLen, capLen, cell, grow, angles, mirrors, dequeBuf, rectOris);
       if(!found) break;
       const {len, placement} = found;
       commitPlacement(scratch, placement.o, placement.ox, placement.oy);
-      run = buildFreeRunUp(scratch); // la ocupación cambió, hay que rehacerlo
+      // la ocupación cambió, pero solo en las columnas de esta tira
+      updateFreeRunUp(scratch, run, placement.ox, placement.ox + placement.o.gw - 1);
       layer[ci].push({
         w:stripW, len,
         x: placement.ox*cell + placement.o.offX, y: placement.oy*cell + placement.o.offY,

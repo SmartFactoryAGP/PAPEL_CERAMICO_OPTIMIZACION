@@ -155,12 +155,46 @@ async function ordActualizarResumenDia(){
 function ordFiltroTexto(){
   return (document.getElementById('ordBuscarInput').value||'').trim().toLowerCase();
 }
+/* Texto de búsqueda de cada orden, armado UNA vez y guardado (antes se
+   rearmaban y pasaban a minúsculas los 10 campos de cada orden en cada
+   tecla del buscador). Los campos se separan con un carácter que nadie
+   tipea, así un filtro nunca coincide "pegando" el final de un campo con
+   el principio del siguiente — mismo resultado que probar campo por campo. */
+const ordTextoBusqueda = new WeakMap();
 function ordCoincideFiltro(o, filtro){
   if(!filtro) return true;
-  // Centro_Trabalho sigue entrando en la búsqueda aunque no se vea como
-  // columna — solo se ocultó de la tabla, no del filtro.
-  const campos = [o.Ordem_Serial, o.Operation, o.Centro_Trabalho, o.Puestodetrabajo, o.ClaveModelo, o.CodMat, o.Name, o.ZTipo, o.Descricao, o.ARCHIVO];
-  return campos.some(v => String(v||'').toLowerCase().includes(filtro));
+  let txt = ordTextoBusqueda.get(o);
+  if(txt===undefined){
+    // Centro_Trabalho sigue entrando en la búsqueda aunque no se vea como
+    // columna — solo se ocultó de la tabla, no del filtro.
+    const campos = [o.Ordem_Serial, o.Operation, o.Centro_Trabalho, o.Puestodetrabajo, o.ClaveModelo, o.CodMat, o.Name, o.ZTipo, o.Descricao, o.ARCHIVO];
+    txt = campos.map(v => String(v||'').toLowerCase()).join('\u0000');
+    ordTextoBusqueda.set(o, txt);
+  }
+  return txt.includes(filtro);
+}
+/* Orden pendiente por número (como string), en O(1) — reemplaza los
+   ordenesPendientes.find(...) que se hacían dentro de otros recorridos
+   (O(n²) con listas grandes). Se reconstruye solo si la lista cambió. */
+let ordIndiceCache = {lista:null, largo:-1, mapa:null};
+function ordIndicePendientes(){
+  const c = ordIndiceCache;
+  if(c.lista!==ordenesPendientes || c.largo!==ordenesPendientes.length){
+    const mapa = new Map();
+    ordenesPendientes.forEach(o=>{ const k=String(o.Ordem_Serial); if(!mapa.has(k)) mapa.set(k, o); });
+    ordIndiceCache = {lista:ordenesPendientes, largo:ordenesPendientes.length, mapa};
+  }
+  return ordIndiceCache.mapa;
+}
+/* Suma una orden a ordenesPendientes si todavía no está (por número),
+   manteniendo el índice al día — sin reconstruirlo entero en cada alta. */
+function ordAgregarPendiente(orden){
+  const indice = ordIndicePendientes(), k = String(orden.Ordem_Serial);
+  if(indice.has(k)) return false;
+  ordenesPendientes.push(orden);
+  indice.set(k, orden);
+  ordIndiceCache.largo = ordenesPendientes.length;
+  return true;
 }
 
 /* Ordena de forma "inteligente": si los dos valores de la columna se
@@ -229,7 +263,14 @@ function ordRenderTabla(){
     <tbody>${rows}</tbody>
   </table>`;
 }
-document.getElementById('ordBuscarInput').addEventListener('input', ordRenderTabla);
+// el buscador re-renderiza la tabla completa: con listas de cientos o
+// miles de órdenes, hacerlo en CADA tecla trababa el tipeo. Se espera a
+// que la persona deje de tipear un instante (120 ms) y se dibuja una vez.
+let ordBuscarTimer = null;
+document.getElementById('ordBuscarInput').addEventListener('input', ()=>{
+  clearTimeout(ordBuscarTimer);
+  ordBuscarTimer = setTimeout(ordRenderTabla, 120);
+});
 
 /* Arma la tabla del "Lote actual" (las que agregaste con "+ Lote"). Si
    ya se corrió "Ejecutar", muestra si cada una quedó ubicada o no. */
@@ -239,9 +280,8 @@ function ordRenderLote(){
     wrap.innerHTML = '<div class="empty">Todavía no agregaste ninguna orden al lote.</div>';
     return;
   }
-  const filas = [...ordEnLoteIds]
-    .map(id=>ordenesPendientes.find(o=>String(o.Ordem_Serial)===id))
-    .filter(Boolean);
+  const indice = ordIndicePendientes();
+  const filas = [...ordEnLoteIds].map(id=>indice.get(id)).filter(Boolean);
   const headerHtml = ORD_COLUMNAS.map(c=>`<th>${c.etiqueta}</th>`).join('');
   const rows = filas.map(o=>{
     const estado = ordLoteEstado.get(String(o.Ordem_Serial));
@@ -348,9 +388,7 @@ async function ordBuscarOrdenSuelta(serial){
     const data = await res.json().catch(()=>({}));
     if(!res.ok || !data.encontrada || !data.orden) return null;
     // por si dos búsquedas sueltas se pisan, no la agrega dos veces
-    if(!ordenesPendientes.some(o=>String(o.Ordem_Serial)===String(data.orden.Ordem_Serial))){
-      ordenesPendientes.push(data.orden);
-    }
+    ordAgregarPendiente(data.orden);
     return data.orden;
   } catch(e){
     return null;
@@ -369,7 +407,7 @@ async function ordIngresoRapidoAlLote(){
   let agregadas = 0, yaEstaban = 0;
   const noEncontradas = [];
   for(const tok of tokens){
-    let orden = ordenesPendientes.find(o=>String(o.Ordem_Serial)===tok);
+    let orden = ordIndicePendientes().get(tok);
     if(!orden) orden = await ordBuscarOrdenSuelta(tok); // no está en la lista ya cargada: buscala puntual
     if(!orden){ noEncontradas.push(tok); continue; }
     const serial = String(orden.Ordem_Serial);
@@ -456,9 +494,7 @@ async function ordAgregarPorCodigoLote(){
     const serial = String(orden.Ordem_Serial);
     // si ya la teníamos (de la lista normal, de otro lote, o de ingreso
     // rápido), reusamos esa fila en vez de duplicarla en ordenesPendientes
-    if(!ordenesPendientes.some(o=>String(o.Ordem_Serial)===serial)){
-      ordenesPendientes.push(orden);
-    }
+    ordAgregarPendiente(orden);
     if(ordEnLoteIds.has(serial)){ yaEstaban++; return; }
     ordEnLoteIds.add(serial);
     agregadas++;
@@ -484,9 +520,8 @@ document.getElementById('ordRefreshBtn').addEventListener('click', ordRefrescar)
    (reutilizando el mismo lector de capas/agujeros de siempre) y corre
    el nesting — todavía no mueve nada al rack. */
 async function ordEjecutarLote(){
-  const seleccion = [...ordEnLoteIds]
-    .map(id=>ordenesPendientes.find(o=>String(o.Ordem_Serial)===id))
-    .filter(Boolean);
+  const indice = ordIndicePendientes();
+  const seleccion = [...ordEnLoteIds].map(id=>indice.get(id)).filter(Boolean);
   if(!seleccion.length){ alert('Agregá al menos una orden al lote actual (botón "+ Lote") antes de ejecutar.'); return; }
 
   const status = document.getElementById('ordRunStatus');
@@ -688,6 +723,7 @@ document.getElementById('ordConfirmBtn').addEventListener('click', ordConfirmar)
    SQL real, se lee de /api/rack-actual y "sacar del rack" pega contra
    /api/rack/:orden/salida (bloqueado salvo PERMITIR_ESCRITURA_SQL). */
 let rackListaActual = []; // lo que se está mostrando ahora mismo en el Rack, para que el buscador compare contra esto
+let rackUltimaFirma = null; // JSON de la última lista dibujada (para no redibujar si no cambió)
 
 /* Buscador para la pistola de código de barras: escaneás (o escribís) el
    número de orden y Enter — te dice dónde está, o "pieza no cortada" si
@@ -798,9 +834,17 @@ async function rackRender(silencioso){
     document.getElementById('rackCount').textContent = '—';
     wrap.innerHTML = `<div class="empty">No se pudo traer el rack del puente: ${escapeHtml(e.message)}</div>`;
     rackListaActual = [];
+    rackUltimaFirma = null;
     return;
   }
   rackListaActual = lista; // para que el buscador (código de barras) tenga contra qué comparar
+  // el refresco automático (cada 6 s, en cada PC) casi siempre trae
+  // exactamente lo mismo: en ese caso no se toca el DOM (antes se
+  // rearmaba la tabla entera cada vez, perdiendo de paso la selección de
+  // texto de quien la estuviera mirando).
+  const firma = JSON.stringify(lista);
+  if(silencioso && firma===rackUltimaFirma) return;
+  rackUltimaFirma = firma;
 
   document.getElementById('rackCount').textContent = lista.length;
   if(!lista.length){

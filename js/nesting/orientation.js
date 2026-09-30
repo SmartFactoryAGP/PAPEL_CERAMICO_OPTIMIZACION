@@ -34,13 +34,47 @@ function setOriCap(n){ ORI_CAP = n; }
    volvían a rasterizar TODAS las orientaciones de TODAS las piezas en
    cada intento (lo más caro de todo el motor). Resultado idéntico — las
    orientaciones son deterministas para la misma geometría y parámetros —
-   solo que calculado una vez. Acotada a ORI_CACHE_MAX entradas (se
-   descarta la usada hace más tiempo) para no crecer sin límite en
-   sesiones largas. Solo entran piezas reales (con id): los rectángulos
-   de prueba de las tiras de relleno (strips.js) cambian de largo en cada
-   paso de la bisección y solo servirían para desalojar a las piezas. */
-const ORI_CACHE = new Map();
-const ORI_CACHE_MAX = 300;
+   solo que calculado una vez. Solo entran piezas reales (con id): los
+   rectángulos de prueba de las tiras de relleno (strips.js) cambian de
+   largo en cada paso de la bisección y solo servirían para desalojar a
+   las piezas.
+   Memoria: se acota por PESO (spans + puntos guardados), no solo por
+   cantidad de entradas — una pieza industrial grande pesa ~10 MB por
+   entrada (medido), así que un tope de "N entradas" solo podía llegar a
+   varios GB con lotes grandes. Se descarta primero la usada hace más
+   tiempo (LRU) hasta volver a entrar en el presupuesto. */
+const ORI_CACHE = {entries: new Map(), peso: 0};
+const ORI_CACHE_MAX = 300;          // entradas
+const ORI_CACHE_MAX_PESO = 2500000; // spans + puntos (~100 MB en el peor caso)
+function pesoOrientaciones(oris){
+  let w = 0;
+  for(const o of oris){
+    for(let y=0;y<o.rows.length;y++) w += o.rows[y].length;
+    w += o.rp.length;
+    if(o.holes) for(const h of o.holes) w += h.length;
+    if(o.engrave) for(const e of o.engrave) w += e.length;
+  }
+  return w;
+}
+function oriCacheLeer(key){
+  const e = ORI_CACHE.entries.get(key);
+  if(!e) return null;
+  ORI_CACHE.entries.delete(key); ORI_CACHE.entries.set(key, e); // pasa a "usada recién"
+  return e.oris;
+}
+function oriCacheGuardar(key, oris){
+  const peso = pesoOrientaciones(oris);
+  if(peso > ORI_CACHE_MAX_PESO) return; // una sola entrada más grande que todo el presupuesto: no se guarda
+  const prev = ORI_CACHE.entries.get(key);
+  if(prev){ ORI_CACHE.peso -= prev.peso; ORI_CACHE.entries.delete(key); }
+  ORI_CACHE.entries.set(key, {oris, peso});
+  ORI_CACHE.peso += peso;
+  for(const [k, e] of ORI_CACHE.entries){
+    if(ORI_CACHE.peso <= ORI_CACHE_MAX_PESO && ORI_CACHE.entries.size <= ORI_CACHE_MAX) break;
+    if(k === key) continue; // nunca desaloja la que se acaba de guardar
+    ORI_CACHE.entries.delete(k); ORI_CACHE.peso -= e.peso;
+  }
+}
 /* Hash de 53 bits (cyrb53) de un texto — para la huella de geometría. */
 function hashTexto(str){
   let h1 = 0xdeadbeef, h2 = 0x41c6ce57;
@@ -68,12 +102,8 @@ async function buildOrientations(piece, cell, grow, angles, mirrors){
   const key = `${cell}|${grow}|${angles.join(',')}|${mirrors.join(',')}|${ORI_CAP}`;
   if(piece._oriKey===key && piece._oris) return piece._oris;
   const globalKey = piece.id!=null ? huellaGeometria(piece)+'|'+key : null;
-  const enCache = globalKey && ORI_CACHE.get(globalKey);
-  if(enCache){
-    ORI_CACHE.delete(globalKey); ORI_CACHE.set(globalKey, enCache); // pasa a "usada recién"
-    piece._oriKey=key; piece._oris=enCache;
-    return enCache;
-  }
+  const enCache = globalKey && oriCacheLeer(globalKey);
+  if(enCache){ piece._oriKey=key; piece._oris=enCache; return enCache; }
   const src = piece.fast || piece.points;
   const hasEngrave = piece.engraveLoops && piece.engraveLoops.length;
   const hasHoles = piece.holes && piece.holes.length;
@@ -84,8 +114,8 @@ async function buildOrientations(piece, cell, grow, angles, mirrors){
     for(const rot of angles){
       const rp = transformPoly(src, rot, mirror);
       const r = rasterizePoly(rp, cell, grow);
-      if(!r.cells.length) continue;
-      const {rows, total} = cellsToRowSpans(r.cells, r.gw, r.gh);
+      if(!r.keys.length) continue;
+      const {rows, total} = cellKeysToRowSpans(r.keys, r.gw, r.gh);
       // descarta orientaciones geométricamente idénticas (piezas simétricas)
       const sig = `${r.gw}x${r.gh}:${total}:${rows.map(sp=>sp.map(s=>s[0]+'-'+s[1]).join(',')).join(';')}`;
       if(seen.has(sig)) continue;
@@ -120,9 +150,6 @@ async function buildOrientations(piece, cell, grow, angles, mirrors){
   // solo suman tiempo de búsqueda por cada pieza que las evalúa.
   const capped = oris.length>ORI_CAP ? oris.slice(0,ORI_CAP) : oris;
   piece._oriKey=key; piece._oris=capped;
-  if(globalKey){
-    ORI_CACHE.set(globalKey, capped);
-    if(ORI_CACHE.size>ORI_CACHE_MAX) ORI_CACHE.delete(ORI_CACHE.keys().next().value);
-  }
+  if(globalKey) oriCacheGuardar(globalKey, capped);
   return capped;
 }
