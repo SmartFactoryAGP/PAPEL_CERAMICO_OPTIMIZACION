@@ -41,20 +41,39 @@ function authHeaders(extra){
 
 function authActualizarUI(){
   const logueado = authEstaLogueado();
-  document.getElementById('authLoggedOut').style.display = logueado ? 'none' : 'flex';
-  document.getElementById('authLoggedIn').style.display = logueado ? 'flex' : 'none';
-  if(logueado) document.getElementById('authUsuarioActual').textContent = authUsuarioActual();
+  document.getElementById('authLoggedOut').hidden = logueado;
+  document.getElementById('authLoggedIn').hidden = !logueado;
+  document.body.classList.toggle('sinSesion', !logueado); // las pestañas que piden sesión se ven con candado
+  if(logueado){
+    const u = authUsuarioActual();
+    document.getElementById('authUsuarioActual').textContent = u;
+    document.getElementById('authAvatar').textContent = authIniciales(u);
+  }
+}
+function authIniciales(nombre){
+  const partes = String(nombre||'').trim().split(/\s+/).filter(Boolean);
+  if(!partes.length) return '·';
+  return (partes[0][0] + (partes.length>1 ? partes[partes.length-1][0] : '')).toUpperCase();
 }
 
+/* La pantalla de ingreso: si se llega acá desde una pestaña que pide
+   sesión, el área que estaba activa queda preseleccionada. */
 function authMostrarLogin(){
-  document.getElementById('authLoginPanel').style.display = 'block';
-  document.getElementById('authLoginError').style.display = 'none';
-  document.getElementById('authUsuarioInput').focus();
+  areaRenderTarjetas();
+  document.getElementById('authLoginError').hidden = true;
+  appMostrarIngreso();
+  setTimeout(()=>document.getElementById('authUsuarioInput').focus(), 60);
 }
-function authOcultarLogin(){
-  document.getElementById('authLoginPanel').style.display = 'none';
+function authLimpiarFormulario(){
   document.getElementById('authUsuarioInput').value = '';
   document.getElementById('authClaveInput').value = '';
+}
+/* "Ver solo el Rack": entra sin contraseña, con el área elegida — el Rack
+   es para cualquiera (las demás pestañas quedan con candado). */
+function authEntrarSoloRack(){
+  aplicarArea(areaSeleccionadaEnLogin());
+  authLimpiarFormulario();
+  appMostrarApp('rack');
 }
 
 function authBridgeUrl(){
@@ -67,8 +86,14 @@ async function authIntentarLogin(){
   const usuario = document.getElementById('authUsuarioInput').value.trim();
   const clave = document.getElementById('authClaveInput').value;
   const errorBox = document.getElementById('authLoginError');
-  errorBox.style.display = 'none';
-  if(!usuario || !clave) return;
+  const btn = document.getElementById('authLoginConfirmBtn');
+  errorBox.hidden = true;
+  if(!usuario || !clave){
+    errorBox.textContent = 'Escribí tu usuario y tu contraseña.';
+    errorBox.hidden = false;
+    return;
+  }
+  btn.disabled = true; btn.classList.add('cargando');
   try {
     const res = await fetch(authBridgeUrl()+'/api/login', {
       method:'POST', headers:{'Content-Type':'application/json'},
@@ -78,11 +103,17 @@ async function authIntentarLogin(){
     if(!res.ok) throw new Error(data.error || ('HTTP '+res.status));
     authStorageSet(AUTH_TOKEN_KEY, data.token);
     authStorageSet(AUTH_USUARIO_KEY, data.usuario);
+    aplicarArea(areaSeleccionadaEnLogin());
     authActualizarUI();
-    authOcultarLogin();
+    authLimpiarFormulario();
+    appMostrarApp('ordenes');
   } catch(e){
-    errorBox.textContent = e.message;
-    errorBox.style.display = 'block';
+    errorBox.textContent = e.message==='Failed to fetch'
+      ? 'No se pudo conectar con el puente. ¿Está encendido el servidor?'
+      : e.message;
+    errorBox.hidden = false;
+  } finally {
+    btn.disabled = false; btn.classList.remove('cargando');
   }
 }
 
@@ -93,14 +124,21 @@ async function authCerrarSesion(){
   authStorageRemove(AUTH_TOKEN_KEY);
   authStorageRemove(AUTH_USUARIO_KEY);
   authActualizarUI();
-  if(typeof switchView==='function') switchView('rack'); // por si estaba en una vista que ya no puede ver
+  authMostrarLogin(); // vuelve a la pantalla de ingreso
 }
 
 document.getElementById('authLoginBtn').addEventListener('click', authMostrarLogin);
-document.getElementById('authLoginCancelBtn').addEventListener('click', authOcultarLogin);
-document.getElementById('authLoginConfirmBtn').addEventListener('click', authIntentarLogin);
-document.getElementById('authClaveInput').addEventListener('keydown', ev=>{ if(ev.key==='Enter'){ ev.preventDefault(); authIntentarLogin(); } });
+document.getElementById('authLoginForm').addEventListener('submit', ev=>{ ev.preventDefault(); authIntentarLogin(); });
 document.getElementById('authUsuarioInput').addEventListener('keydown', ev=>{ if(ev.key==='Enter'){ ev.preventDefault(); document.getElementById('authClaveInput').focus(); } });
+document.getElementById('authRackOnlyBtn').addEventListener('click', authEntrarSoloRack);
 document.getElementById('authLogoutBtn').addEventListener('click', authCerrarSesion);
+// ojo de la contraseña: mostrar / ocultar lo que se escribió
+document.getElementById('authClaveToggle').addEventListener('click', ()=>{
+  const input = document.getElementById('authClaveInput');
+  const ver = input.type==='password';
+  input.type = ver ? 'text' : 'password';
+  document.getElementById('authClaveToggle').setAttribute('aria-pressed', ver ? 'true' : 'false');
+  document.getElementById('authClaveToggle').setAttribute('aria-label', ver ? 'Ocultar contraseña' : 'Mostrar contraseña');
+});
 
 authActualizarUI();

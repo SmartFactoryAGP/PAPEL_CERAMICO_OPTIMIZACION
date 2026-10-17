@@ -222,5 +222,18 @@ module.exports = {
     columnaOrden: 'Orden',
     columnaPuesto: 'Puestodetrabajo',
     columnaZfer: 'ZFER'
+  },
+
+  /* Tecoflex y Mallas: viven en OTRAS tablas — completar cuando estén
+     confirmadas (ver la explicación completa en queries.example.js).
+     Mientras estén vacías, esas áreas muestran "consulta pendiente de
+     configurar" en Lista de corte; el Rack de cada una ya funciona. */
+  areas: {
+    tecoflex: {
+      // ordenesPendientes: `SELECT ... AS "Ordem_Serial", ... AS "ARCHIVO", ... AS "Medida" FROM dbo.TU_TABLA_TECOFLEX WHERE ...`,
+    },
+    mallas: {
+      // ordenesPendientes: `SELECT ... AS "Ordem_Serial", ... FROM dbo.TU_TABLA_MALLAS WHERE ...`,
+    }
   }
 };

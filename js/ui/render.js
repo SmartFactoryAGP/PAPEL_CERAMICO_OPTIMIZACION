@@ -159,7 +159,7 @@ function renderChapas(sheetW, chapaLen, chapas){
     const repeatHtml = g.indices.length>1 ? `<span class="repeatTag">×${g.indices.length}</span>` : '';
     const mir = g.chapa.placed.filter(p=>p.mirror).length;
     const mirHtml = mir ? `<span class="mirrorTag">${mir} esp.</span>` : '';
-    header.innerHTML = `<span style="color:#f1f3fb">Chapa ${g.indices.join(', ')}${repeatHtml}${mirHtml}</span><span style="color:${utilColor(pct)}">${pct.toFixed(1)}%</span>`;
+    header.innerHTML = `<span style="color:var(--ink)">Chapa ${g.indices.join(', ')}${repeatHtml}${mirHtml}</span><span style="color:${utilColor(pct)};font-family:var(--font-mono)">${pct.toFixed(1)}%</span>`;
     box.appendChild(header);
     const key = chapaDrawKey(g.chapa, sheetW, chapaLen, idMap, pxPerMM, effLen);
     let canvas = prevCanvases.get(key);

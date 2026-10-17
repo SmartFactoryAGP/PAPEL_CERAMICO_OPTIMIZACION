@@ -59,6 +59,39 @@ try {
   queries = require('./queries.example');
 }
 
+/* Áreas de trabajo (Papel cerámico / Tecoflex / Mallas): la MISMA
+   configuración que usa la app (js/core/areas-config.js), así las
+   posiciones y materiales que se validan acá nunca difieren de los que
+   se muestran en pantalla. */
+const AREAS_CONFIG = require(path.join(__dirname, '..', 'js', 'core', 'areas-config.js'));
+/* Área del pedido: la app la manda en la cabecera x-area (ver
+   ordApiHeaders en orders.js). Sin cabecera = papel cerámico, para que
+   todo lo que ya existía siga funcionando igual. */
+function areaDe(req){
+  const id = String(req.get('x-area') || req.query.area || AREAS_CONFIG.porDefecto).trim().toLowerCase();
+  const area = AREAS_CONFIG.areas[id];
+  if(!area){ const e = new Error(`área de trabajo desconocida: "${id}"`); e.status = 400; throw e; }
+  return area;
+}
+/* Consulta SQL propia de un área (Tecoflex y Mallas viven en OTRAS
+   tablas — se completan en queries.js → areas.<área>). Mientras no esté
+   cargada, se contesta 501 con un mensaje claro en vez de fallar raro. */
+function consultaDeArea(area, nombre){
+  const q = queries.areas && queries.areas[area.id] && queries.areas[area.id][nombre];
+  if(!q){
+    const e = new Error(`La consulta de ${area.nombre} todavía no está configurada (server/queries.js → areas.${area.id}.${nombre}).`);
+    e.status = 501; e.pendiente = true;
+    throw e;
+  }
+  return q;
+}
+/* Respuesta de error estándar de los endpoints: usa el código que traiga
+   el error (400 área desconocida, 501 consulta pendiente) o 500. */
+function responderError(res, etiqueta, err){
+  console.error(`[${etiqueta}]`, err.message);
+  res.status(err.status || 500).json({ error: err.message, pendiente: !!err.pendiente });
+}
+
 const app = express();
 
 const PORT = process.env.PORT || 4000;
@@ -162,15 +195,19 @@ function secretoIgual(recibido, esperado){
 app.use((req, res, next)=>{
   const token = process.env.API_TOKEN;
   if(!token) return next(); // sin clave configurada, no se exige nada
-  if(secretoIgual(req.get('x-api-token'), token)) return next();
+  // la conexión en vivo (EventSource) no puede mandar cabeceras: ahí va en la URL
+  const recibido = req.get('x-api-token') || (req.path==='/api/eventos' ? req.query.api_token : undefined);
+  if(secretoIgual(recibido, token)) return next();
   res.status(401).json({ error: 'falta o no coincide x-api-token' });
 });
 
-// Registro simple de cada pedido, para poder rastrear después quién
-// marcó qué y cuándo si algo no cuadra (no guarda contraseñas ni datos
-// del DXF, solo método+ruta+hora).
+// Registro de los pedidos que CAMBIAN algo (POST), para poder rastrear
+// después quién hizo qué y cuándo. Antes se registraba TODO pedido, incluidas
+// las consultas que cada PC hace sola: con 30 PCs eran varias líneas por
+// segundo, y en Windows escribir en la consola es sincrónico — frenaba el
+// puente entero. Los errores se siguen registrando siempre (ver más abajo).
 app.use((req, res, next)=>{
-  console.log(`[${new Date().toISOString()}] ${req.method} ${req.originalUrl}`);
+  if(req.method !== 'GET') console.log(`[${new Date().toISOString()}] ${req.method} ${req.originalUrl}`);
   next();
 });
 
@@ -444,38 +481,74 @@ function puestoPermitido(valor){
   return PUESTOS_PERMITIDOS.has(String(valor||'').trim().toUpperCase());
 }
 
+/* Pendientes de Tecoflex / Mallas: otras tablas, con su propia consulta
+   (queries.js → areas.<área>.ordenesPendientes). Tiene que devolver las
+   mismas columnas que la de papel cerámico (Ordem_Serial, ARCHIVO...) y,
+   para Tecoflex, opcionalmente "Medida" (la posición del rack que se
+   sugiere al confirmar). No se le aplica el filtro de Puestodetrabajo de
+   papel cerámico — ese filtro es propio de esa área. */
+async function pendientesDeArea(area){
+  const consulta = consultaDeArea(area, 'ordenesPendientes'); // antes de conectar: si falta, "pendiente" y listo
+  const pool = await getPool();
+  const result = await pool.request().query(consulta);
+  return result.recordset;
+}
+
+/* Pedidos iguales casi simultáneos se juntan en UNA consulta: con 30
+   personas tocando "Actualizar" a la vez, antes salían 30 consultas
+   pesadas a SQL (y otras 30 a Calendario) al mismo tiempo. Ahora, mientras
+   una está en curso, las demás esperan esa misma; y el resultado se
+   reusa unos segundos. Si falla, no se guarda (el próximo reintenta). */
+const CACHE_PENDIENTES_MS = parseInt(process.env.CACHE_PENDIENTES_MS || '15000', 10);
+const cacheConsultas = new Map(); // clave -> {hasta, promesa}
+function consultaCompartida(clave, ttlMs, fn){
+  const c = cacheConsultas.get(clave);
+  if(c && (c.enCurso || Date.now() < c.hasta)) return c.promesa;
+  const entrada = { enCurso: true, hasta: 0 };
+  entrada.promesa = fn().then(
+    v=>{ entrada.enCurso = false; entrada.hasta = Date.now() + ttlMs; return v; },
+    e=>{ cacheConsultas.delete(clave); throw e; }
+  );
+  cacheConsultas.set(clave, entrada);
+  return entrada.promesa;
+}
+
 app.get('/api/ordenes-pendientes', exigirLogin, async (req, res) => {
   try {
-    const pool = await getPool();
-    // la consulta principal (SQL de SAGA) y la de ZFER (Calendario, OTRO
-    // servidor) no dependen una de la otra: van en paralelo, así el tiempo
-    // de respuesta es el de la más lenta y no la suma de las dos.
-    const [result, serialesZfer] = await Promise.all([
-      pool.request().query(queries.ordenesPendientes),
-      traerOrdenesConZferEspecial()
-    ]);
-    let filas = result.recordset;
-
-    // pedido explícito: sumar las órdenes que NO tienen Operation='0132'
-    // pero sí tienen ZFER='70005171' en Calendario — mismo tratamiento que
-    // las de siempre (archivo/ruta real, Puestodetrabajo, y el MISMO
-    // filtro de Puestodetrabajo permitido de abajo) una vez que se
-    // juntan con las demás.
-    const seriales0132 = new Set(filas.map(f=>String(f.Ordem_Serial)));
-    const nuevosPorZfer = serialesZfer.filter(s=>!seriales0132.has(s));
-    if(nuevosPorZfer.length){
-      const extra = await buscarOrdenesPorSerial(nuevosPorZfer, OPERATION_PARA_ORDENES_ZFER);
-      filas = filas.concat(extra);
-    }
-
-    const puestos = await traerPuestosDeTrabajo(filas.map(f=>f.Ordem_Serial));
-    filas.forEach(f=>{ f.Puestodetrabajo = puestos[String(f.Ordem_Serial)] || ''; });
-    res.json(filas.filter(f=>puestoPermitido(f.Puestodetrabajo)));
+    const area = areaDe(req);
+    const filas = await consultaCompartida('pendientes:'+area.id, CACHE_PENDIENTES_MS, ()=>area.id==='papel' ? pendientesPapel() : pendientesDeArea(area));
+    res.json(filas);
   } catch (err) {
-    console.error('[ordenes-pendientes]', err.message);
-    res.status(500).json({ error: err.message });
+    responderError(res, 'ordenes-pendientes', err);
   }
 });
+async function pendientesPapel(){
+  const pool = await getPool();
+  // la consulta principal (SQL de SAGA) y la de ZFER (Calendario, OTRO
+  // servidor) no dependen una de la otra: van en paralelo, así el tiempo
+  // de respuesta es el de la más lenta y no la suma de las dos.
+  const [result, serialesZfer] = await Promise.all([
+    pool.request().query(queries.ordenesPendientes),
+    traerOrdenesConZferEspecial()
+  ]);
+  let filas = result.recordset;
+
+  // pedido explícito: sumar las órdenes que NO tienen Operation='0132'
+  // pero sí tienen ZFER='70005171' en Calendario — mismo tratamiento que
+  // las de siempre (archivo/ruta real, Puestodetrabajo, y el MISMO
+  // filtro de Puestodetrabajo permitido de abajo) una vez que se
+  // juntan con las demás.
+  const seriales0132 = new Set(filas.map(f=>String(f.Ordem_Serial)));
+  const nuevosPorZfer = serialesZfer.filter(s=>!seriales0132.has(s));
+  if(nuevosPorZfer.length){
+    const extra = await buscarOrdenesPorSerial(nuevosPorZfer, OPERATION_PARA_ORDENES_ZFER);
+    filas = filas.concat(extra);
+  }
+
+  const puestos = await traerPuestosDeTrabajo(filas.map(f=>f.Ordem_Serial));
+  filas.forEach(f=>{ f.Puestodetrabajo = puestos[String(f.Ordem_Serial)] || ''; });
+  return filas.filter(f=>puestoPermitido(f.Puestodetrabajo));
+}
 
 /* Búsqueda puntual de UNA orden por su número, para el "Ingreso
    rápido" de Lista de corte: a propósito NO aplica el filtro de
@@ -488,18 +561,22 @@ app.get('/api/ordenes-pendientes', exigirLogin, async (req, res) => {
    una falla. */
 app.get('/api/ordenes-pendientes/:orden', exigirLogin, async (req, res) => {
   try {
+    const area = areaDe(req);
+    const esPapel = area.id === 'papel';
+    const consulta = esPapel ? queries.ordenPorSerial : consultaDeArea(area, 'ordenPorSerial');
     const pool = await getPool();
     const result = await pool.request()
       .input('orden', sql.VarChar, req.params.orden)
-      .query(queries.ordenPorSerial);
+      .query(consulta);
     if(!result.recordset.length) return res.json({ encontrada: false });
     const fila = result.recordset[0];
-    const puestos = await traerPuestosDeTrabajo([fila.Ordem_Serial]);
-    fila.Puestodetrabajo = puestos[String(fila.Ordem_Serial)] || '';
+    if(esPapel){
+      const puestos = await traerPuestosDeTrabajo([fila.Ordem_Serial]);
+      fila.Puestodetrabajo = puestos[String(fila.Ordem_Serial)] || '';
+    }
     res.json({ encontrada: true, orden: fila });
   } catch (err) {
-    console.error('[ordenes-pendientes/:orden]', err.message);
-    res.status(500).json({ error: err.message });
+    responderError(res, 'ordenes-pendientes/:orden', err);
   }
 });
 
@@ -515,17 +592,21 @@ app.get('/api/ordenes-pendientes/:orden', exigirLogin, async (req, res) => {
    (orders.js), no esta ruta. */
 app.get('/api/lote/:codigo', exigirLogin, async (req, res) => {
   try {
+    const area = areaDe(req);
+    const esPapel = area.id === 'papel';
+    const consulta = esPapel ? queries.ordenesPorLote : consultaDeArea(area, 'ordenesPorLote');
     const pool = await getPool();
     const result = await pool.request()
       .input('lote', sql.VarChar, req.params.codigo)
-      .query(queries.ordenesPorLote);
+      .query(consulta);
     const filas = result.recordset;
-    const puestos = await traerPuestosDeTrabajo(filas.map(f=>f.Ordem_Serial));
-    filas.forEach(f=>{ f.Puestodetrabajo = puestos[String(f.Ordem_Serial)] || ''; });
+    if(esPapel){
+      const puestos = await traerPuestosDeTrabajo(filas.map(f=>f.Ordem_Serial));
+      filas.forEach(f=>{ f.Puestodetrabajo = puestos[String(f.Ordem_Serial)] || ''; });
+    }
     res.json(filas);
   } catch (err) {
-    console.error('[lote/:codigo]', err.message);
-    res.status(500).json({ error: err.message });
+    responderError(res, 'lote/:codigo', err);
   }
 });
 
@@ -535,9 +616,11 @@ app.get('/api/lote/:codigo', exigirLogin, async (req, res) => {
    le pegan a este mismo puente ven exactamente el mismo Rack, lo
    actualicen desde donde lo actualicen. Nunca toca SQL para nada — es
    solo un archivo de texto plano en esta misma carpeta del servidor. */
-const RACK_SIMULADO_PATH = path.join(__dirname, 'rack-simulado.json');
-const RACK_LETRAS = ['A','B','C','D','E','F','G'];
-const RACK_POR_LETRA = 20;
+/* Un archivo de rack POR ÁREA. Papel cerámico conserva el nombre de
+   siempre (rack-simulado.json) para que lo que ya estaba guardado siga
+   ahí sin migrar nada. */
+const RACK_ARCHIVOS = { papel: 'rack-simulado.json', tecoflex: 'rack-tecoflex.json', mallas: 'rack-mallas.json' };
+function rackPath(area){ return path.join(__dirname, RACK_ARCHIVOS[area.id]); }
 
 /* Lee una lista guardada en un JSON de esta carpeta. Si el archivo
    todavía no existe (primera vez) o está vacío, devuelve [] como
@@ -594,17 +677,31 @@ function escribirListaJson(ruta, lista){
   } catch(_){ cacheListas.delete(ruta); }
 }
 
-function leerRackSimulado(){ return leerListaJson(RACK_SIMULADO_PATH); }
-function guardarRackSimulado(lista){ escribirListaJson(RACK_SIMULADO_PATH, lista); }
-function proximaUbicacionLibre(lista){
+function leerRackSimulado(area){ return leerListaJson(rackPath(area)); }
+function guardarRackSimulado(area, lista){
+  escribirListaJson(rackPath(area), lista);
+  notificar({ tipo:'rack', area: area.id }); // las demás PCs refrescan su Rack al instante
+}
+/* Rack de casillas (papel cerámico, mallas): la próxima casilla libre,
+   A1, A2 ... G20 — una orden por casilla. */
+function proximaUbicacionLibre(area, lista){
   const ocupadas = new Set(lista.map(o=>o.ubicacion));
-  for(const letra of RACK_LETRAS){
-    for(let n=1; n<=RACK_POR_LETRA; n++){
+  for(const letra of area.rack.letras){
+    for(let n=1; n<=area.rack.porLetra; n++){
       const loc = letra+n;
       if(!ocupadas.has(loc)) return loc;
     }
   }
-  return null; // las 140 ubicaciones están ocupadas — no debería pasar en la práctica
+  return null; // todas las casillas están ocupadas — no debería pasar en la práctica
+}
+function capacidadRack(area){ return area.rack.letras.length * area.rack.porLetra; }
+/* Los endpoints de rack por órdenes (/api/rack-simulado*) son solo para
+   racks de casillas; Tecoflex usa el inventario (/api/inventario). */
+function exigirRackCasillas(area){
+  if(area.rack.tipo !== 'casillas'){
+    const e = new Error(`El rack de ${area.nombre} es un inventario por material y medida, no por órdenes (usá /api/inventario).`);
+    e.status = 400; throw e;
+  }
 }
 
 /* Registro chico de "entró al rack" / "salió del rack" — separado del
@@ -633,37 +730,47 @@ function esHoy(fechaISO){
   return d.getFullYear()===hoy.getFullYear() && d.getMonth()===hoy.getMonth() && d.getDate()===hoy.getDate();
 }
 
+/* Los registros viejos del historial (de antes de las áreas) no tienen
+   "area": son todos de papel cerámico. */
+function esDelArea(h, area){ return (h.area || 'papel') === area.id; }
+
 app.get('/api/rack-simulado', (req, res) => {
-  res.json(leerRackSimulado());
+  const area = areaDe(req);
+  exigirRackCasillas(area);
+  res.json(leerRackSimulado(area));
 });
 
 app.post('/api/rack-simulado/agregar', exigirLogin, (req, res) => {
-  const orden = req.body || {};
+  const area = areaDe(req);
+  exigirRackCasillas(area);
+  const orden = Object.assign({}, req.body || {});
   if(!orden.Ordem_Serial) return res.status(400).json({ error: 'falta Ordem_Serial' });
-  const lista = leerRackSimulado();
+  const lista = leerRackSimulado(area);
   if(lista.find(o=>o.Ordem_Serial===orden.Ordem_Serial)){
-    return res.status(409).json({ error: 'esa orden ya está en el rack simulado' });
+    return res.status(409).json({ error: 'esa orden ya está en el rack' });
   }
-  const ubicacion = proximaUbicacionLibre(lista);
-  if(!ubicacion) return res.status(409).json({ error: 'rack lleno, las 140 ubicaciones están ocupadas' });
+  const ubicacion = proximaUbicacionLibre(area, lista);
+  if(!ubicacion) return res.status(409).json({ error: `rack lleno, las ${capacidadRack(area)} ubicaciones están ocupadas` });
   lista.push({ ...orden, ubicacion });
-  guardarRackSimulado(lista);
-  agregarAlHistorial({ Ordem_Serial: orden.Ordem_Serial, ubicacion, usuario: req.usuario, evento: 'entrada' });
+  guardarRackSimulado(area, lista);
+  agregarAlHistorial({ area: area.id, Ordem_Serial: orden.Ordem_Serial, ubicacion, usuario: req.usuario, evento: 'entrada' });
   res.json({ ok: true, ubicacion });
 });
 
 app.post('/api/rack-simulado/:orden/salida', (req, res) => {
+  const area = areaDe(req);
+  exigirRackCasillas(area);
   const { orden } = req.params;
-  let lista = leerRackSimulado();
+  let lista = leerRackSimulado(area);
   // Guardamos el renglón COMPLETO (no solo el Ordem_Serial) antes de
   // sacarlo — así, si después hace falta una reentrada por error del
   // operario, se puede reconstruir la orden entera (ubicación incluida)
   // sin tener que volver a pedir nada a SQL.
   const encontrada = lista.find(o=>o.Ordem_Serial === orden);
   lista = lista.filter(o=>o.Ordem_Serial !== orden);
-  guardarRackSimulado(lista);
+  guardarRackSimulado(area, lista);
   const sacada = !!encontrada;
-  if(sacada) agregarAlHistorial({ Ordem_Serial: orden, ubicacion: encontrada.ubicacion, orden: encontrada, usuario: req.usuario||null, evento: 'salida' });
+  if(sacada) agregarAlHistorial({ area: area.id, Ordem_Serial: orden, ubicacion: encontrada.ubicacion, orden: encontrada, usuario: req.usuario||null, evento: 'salida' });
   res.json({ ok: true, sacada });
 });
 
@@ -675,8 +782,9 @@ app.post('/api/rack-simulado/:orden/salida', (req, res) => {
    orden SÍ está en el rack ahora mismo, o nunca tuvo una salida
    registrada, devuelve encontrada:false. */
 app.get('/api/rack-simulado/:orden/ultima-salida', (req, res) => {
+  const area = areaDe(req);
   const { orden } = req.params;
-  const enRackAhora = leerRackSimulado().some(o=>o.Ordem_Serial === orden);
+  const enRackAhora = leerRackSimulado(area).some(o=>o.Ordem_Serial === orden);
   if(enRackAhora) return res.json({ encontrada: false, motivo: 'la orden ya está en el rack ahora mismo' });
   const historial = leerHistorial();
   // el historial solo crece (nunca se reescribe), así que la última
@@ -684,7 +792,7 @@ app.get('/api/rack-simulado/:orden/ultima-salida', (req, res) => {
   // es la más reciente.
   for(let i=historial.length-1; i>=0; i--){
     const h = historial[i];
-    if(h.Ordem_Serial===orden && h.evento==='salida' && h.ubicacion){
+    if(h.Ordem_Serial===orden && h.evento==='salida' && h.ubicacion && esDelArea(h, area)){
       return res.json({ encontrada: true, ubicacion: h.ubicacion, orden: h.orden||null, fecha: h.fecha });
     }
   }
@@ -701,11 +809,13 @@ app.get('/api/rack-simulado/:orden/ultima-salida', (req, res) => {
    la que está ahí, o reingresar en otra posición desde "+ Agregar"
    normal). */
 app.post('/api/rack-simulado/reentrada', exigirLogin, (req, res) => {
+  const area = areaDe(req);
+  exigirRackCasillas(area);
   const { ubicacion } = req.body || {};
   const orden = (req.body && req.body.orden) || {};
   if(!orden.Ordem_Serial) return res.status(400).json({ error: 'falta Ordem_Serial' });
   if(!ubicacion) return res.status(400).json({ error: 'falta la ubicación a reingresar' });
-  const lista = leerRackSimulado();
+  const lista = leerRackSimulado(area);
   if(lista.find(o=>o.Ordem_Serial===orden.Ordem_Serial)){
     return res.status(409).json({ error: 'esa orden ya está en el rack' });
   }
@@ -714,21 +824,261 @@ app.post('/api/rack-simulado/reentrada', exigirLogin, (req, res) => {
     return res.status(409).json({ error: `la posición ${ubicacion} ya la ocupa la orden ${ocupante.Ordem_Serial} — sacala primero, o reingresá esta desde "+ Agregar" para que le asignen otra posición libre` });
   }
   lista.push({ ...orden, ubicacion });
-  guardarRackSimulado(lista);
-  agregarAlHistorial({ Ordem_Serial: orden.Ordem_Serial, ubicacion, usuario: req.usuario, evento: 'reentrada' });
+  guardarRackSimulado(area, lista);
+  agregarAlHistorial({ area: area.id, Ordem_Serial: orden.Ordem_Serial, ubicacion, usuario: req.usuario, evento: 'reentrada' });
   res.json({ ok: true, ubicacion });
 });
+
+/* ============ Inventario por material y medida (Tecoflex) ============
+   No va por órdenes: es un stock en cantidades, por (material, medida).
+   - GET  /api/inventario[?version=N]  -> {version, stock, movimientos, hoy}  (o {sinCambios:true})
+   - POST /api/inventario/movimientos  -> {items:[{tipo, material, medida, cantidad}], nota, idCliente}
+     El lote se valida ENTERO antes de tocar nada (material y medida
+     válidos, cantidad entera > 0, ninguna salida deja stock negativo): si
+     una sola línea falla no se aplica ninguna. Node atiende un pedido por
+     vez y todo esto es sincrónico, así que 30 PCs registrando a la vez no
+     se pisan.
+
+   Diseño para muchos usuarios a la vez (antes: un JSON con TODO el
+   historial que se leía y reescribía entero en cada movimiento — cada
+   registro tardaba más que el anterior y bloqueaba el puente para todos):
+   - movimientos-<área>.jsonl: DIARIO de movimientos, una línea por
+     movimiento, solo se AGREGA al final (costo fijo, no crece con el
+     historial). Es la fuente de verdad.
+   - El stock vive en memoria y se reconstruye al arrancar repasando el
+     diario de punta a punta — así stock e historial nunca pueden quedar
+     distintos (antes, un corte entre las dos escrituras los desfasaba).
+     inventario-<área>.json queda como foto legible del stock actual.
+   - version = cantidad de movimientos; cada cambio se avisa en vivo
+     (ver /api/eventos) con el movimiento y el stock nuevo.
+   - idCliente: la app manda un id por carrito. Si el mismo lote llega dos
+     veces (doble clic, o la red cortó la respuesta y el operario
+     reintentó), se devuelve el resultado de la primera vez en lugar de
+     descontar dos veces.
+   No pide sesión (igual que el Rack); si hay una abierta, queda a su nombre. */
+const INV_MAX_CANTIDAD = 100000;
+const INV_RECIENTES = 300;  // movimientos que se mandan a la pantalla
+const inventarioPath  = area => path.join(__dirname, `inventario-${area.id}.json`);
+const diarioPath      = area => path.join(__dirname, `movimientos-${area.id}.jsonl`);
+const historialViejoPath = area => path.join(__dirname, `movimientos-${area.id}.json`);
+const invClave = (m, d) => m+'|'+d;
+const inventarios = new Map(); // área -> {version, stock:Map, movimientos:[], porIdCliente:Map}
+
+/* Carga (una sola vez por área) el diario y reconstruye el stock. */
+function inventarioDe(area){
+  let inv = inventarios.get(area.id);
+  if(inv) return inv;
+  // migración única: el historial viejo (JSON con un arreglo) pasa al diario
+  const viejo = historialViejoPath(area), diario = diarioPath(area);
+  if(fs.existsSync(viejo) && !fs.existsSync(diario)){
+    const lista = leerListaJson(viejo);
+    fs.writeFileSync(diario, lista.map(m=>JSON.stringify(m)).join('\n') + (lista.length ? '\n' : ''), 'utf8');
+    fs.renameSync(viejo, viejo + '.migrado');
+    console.log(`[inventario] ${area.id}: ${lista.length} movimiento(s) migrados a ${path.basename(diario)}`);
+  }
+  inv = {version:0, stock:new Map(), movimientos:[], porIdCliente:new Map()};
+  // claves viejas de material -> la actual (campo "alias" en areas-config.js).
+  // El diario NO se reescribe: la traducción es solo en memoria.
+  const alias = new Map();
+  area.materiales.forEach(m=>(m.alias||[]).forEach(a=>alias.set(a, m)));
+  const normalizar = items => items.forEach(l=>{
+    const m = alias.get(l.material);
+    if(m){ l.material = m.id; l.materialNombre = m.nombre; l.codigo = m.codigo||null; }
+  });
+  if(fs.existsSync(diario)){
+    const texto = fs.readFileSync(diario, 'utf8');
+    // si un apagón cortó la última línea a la mitad, el próximo movimiento
+    // se pegaría a ese pedazo y quedaría ilegible (se perdería en el
+    // siguiente reinicio): se cierra esa línea antes de seguir agregando
+    if(texto && !texto.endsWith('\n')) fs.appendFileSync(diario, '\n', 'utf8');
+    const lineas = texto.split('\n');
+    let malas = 0;
+    lineas.forEach(t=>{
+      if(!t.trim()) return;
+      let mv; try { mv = JSON.parse(t); } catch(e){ malas++; return; } // p.ej. una línea cortada por un apagón
+      normalizar(mv.items);
+      aplicarAlStock(inv.stock, mv.items);
+      inv.movimientos.push(mv);
+      if(mv.idCliente) inv.porIdCliente.set(mv.idCliente, mv);
+    });
+    if(malas) console.error(`[inventario] ${area.id}: ${malas} línea(s) ilegibles en ${path.basename(diario)} — se saltearon`);
+  }
+  // stock de un material que ya no está en la lista: no se esconde, se avisa
+  // (la pantalla lo muestra aparte, marcado "material sin configurar")
+  const conocidos = new Set(area.materiales.map(m=>m.id));
+  const huerfanos = [...new Set([...inv.stock.keys()].map(k=>k.split('|')[0]).filter(m=>!conocidos.has(m)))];
+  if(huerfanos.length) console.error(`[inventario] ${area.id}: hay stock de material(es) que no están en js/core/areas-config.js: ${huerfanos.join(', ')} — agregalos ahí (o como "alias" del material correcto)`);
+  inv.version = inv.movimientos.length;
+  inventarios.set(area.id, inv);
+  // la foto legible se guarda con atraso (ver programarFotoStock): si el
+  // puente se cerró en ese segundo quedó vieja, así que se rehace al cargar
+  try { escribirListaJson(inventarioPath(area), stockComoLista(inv)); } catch(e){ console.error('[inventario] foto del stock:', e.message); }
+  return inv;
+}
+function aplicarAlStock(stock, items){
+  items.forEach(l=>{
+    const k = invClave(l.material, l.medida);
+    const n = (stock.get(k)||0) + (l.tipo==='entrada' ? l.cantidad : -l.cantidad);
+    if(n) stock.set(k, n); else stock.delete(k);
+  });
+}
+function stockComoLista(inv){
+  const lista = [];
+  inv.stock.forEach((cantidad, k)=>{ if(cantidad>0){ const [material, medida] = k.split('|'); lista.push({material, medida, cantidad}); } });
+  return lista;
+}
+/* Totales de HOY sobre TODOS los movimientos del día (antes la pantalla los
+   sumaba solo sobre los últimos 300: en un día con mucho movimiento daban
+   de menos). Recorre desde el final hasta el primer movimiento de ayer. */
+function totalesDeHoy(inv){
+  let sale = 0, entra = 0;
+  for(let i=inv.movimientos.length-1; i>=0; i--){
+    const mv = inv.movimientos[i];
+    if(!esHoy(mv.fecha)) break;
+    mv.items.forEach(l=>{ if(l.tipo==='salida') sale += l.cantidad; else entra += l.cantidad; });
+  }
+  return {sale, entra};
+}
+/* La foto legible del stock (inventario-<área>.json) no es la fuente de
+   verdad (lo es el diario), así que no hace falta reescribirla en cada
+   movimiento: con mucha actividad se guarda como mucho una vez por segundo. */
+const fotosPendientes = new Set();
+function programarFotoStock(area, inv){
+  if(fotosPendientes.has(area.id)) return;
+  fotosPendientes.add(area.id);
+  setTimeout(()=>{
+    fotosPendientes.delete(area.id);
+    try { escribirListaJson(inventarioPath(area), stockComoLista(inv)); }
+    catch(e){ console.error('[inventario] no se pudo guardar la foto del stock:', e.message); }
+  }, 1000);
+}
+function exigirInventario(area){
+  if(area.rack.tipo !== 'inventario'){
+    const e = new Error(`${area.nombre} no maneja inventario por material y medida.`);
+    e.status = 400; throw e;
+  }
+}
+function usuarioDeSesion(req){
+  const token = req.get('x-auth-token');
+  const s = token && sesiones.get(token);
+  return s ? s.usuario : null;
+}
+/* Valida y normaliza una línea; devuelve {linea} o {error}. */
+function lineaInventario(area, it, i){
+  const n = `línea ${i+1}`;
+  if(!it || (it.tipo!=='entrada' && it.tipo!=='salida')) return {error:`${n}: tipo inválido (entrada o salida)`};
+  const mat = area.materiales.find(m=>m.id===it.material || (m.alias||[]).includes(it.material));
+  if(!mat) return {error:`${n}: material desconocido "${it.material}"`};
+  const medida = String(it.medida==null?'':it.medida).trim().replace('.', ',');
+  if(!mat.medidas.includes(medida)) return {error:`${n}: ${mat.nombre} no tiene medida ${medida||'(vacía)'} mm`};
+  const cantidad = Number(it.cantidad);
+  if(!Number.isInteger(cantidad) || cantidad<=0 || cantidad>INV_MAX_CANTIDAD) return {error:`${n}: cantidad inválida "${it.cantidad}" (entero de 1 a ${INV_MAX_CANTIDAD})`};
+  return {linea:{tipo:it.tipo, material:mat.id, materialNombre:mat.nombre, codigo:mat.codigo||null, medida, cantidad}};
+}
+
+app.get('/api/inventario', (req, res) => {
+  const area = areaDe(req);
+  exigirInventario(area);
+  const inv = inventarioDe(area);
+  // respaldo de las PCs sin conexión en vivo: si ya tienen esta versión,
+  // no se les manda nada de nuevo
+  if(req.query.version!=null && Number(req.query.version)===inv.version) return res.json({ sinCambios: true, version: inv.version });
+  res.json({
+    version: inv.version,
+    stock: stockComoLista(inv),
+    movimientos: inv.movimientos.slice(-INV_RECIENTES).reverse(),
+    hoy: totalesDeHoy(inv)
+  });
+});
+
+app.post('/api/inventario/movimientos', (req, res) => {
+  const area = areaDe(req);
+  exigirInventario(area);
+  const inv = inventarioDe(area);
+  const idCliente = typeof (req.body && req.body.idCliente)==='string' ? req.body.idCliente.slice(0, 64) : null;
+  if(idCliente && inv.porIdCliente.has(idCliente)){
+    // el mismo carrito ya se registró (reintento): no se vuelve a aplicar
+    return res.json({ ok: true, repetido: true, version: inv.version, movimiento: inv.porIdCliente.get(idCliente), stock: stockComoLista(inv), hoy: totalesDeHoy(inv) });
+  }
+  const items = (req.body && req.body.items) || [];
+  if(!Array.isArray(items) || !items.length) return res.status(400).json({ error: 'no hay ningún movimiento para registrar' });
+  if(items.length > 500) return res.status(400).json({ error: 'demasiadas líneas en un solo lote (máximo 500)' });
+
+  const errores = [], lineas = [];
+  items.forEach((it, i)=>{ const r = lineaInventario(area, it, i); if(r.error) errores.push(r.error); else lineas.push(r.linea); });
+  if(errores.length) return res.status(400).json({ error: 'El lote tiene líneas inválidas — no se registró nada.', detalles: errores });
+
+  // stock resultante = actual + entradas − salidas, por (material, medida)
+  const neto = new Map(), saleTotal = new Map();
+  lineas.forEach(l=>{
+    const k = invClave(l.material, l.medida);
+    neto.set(k, (neto.get(k)||0) + (l.tipo==='entrada' ? l.cantidad : -l.cantidad));
+    if(l.tipo==='salida') saleTotal.set(k, (saleTotal.get(k)||0) + l.cantidad);
+  });
+  const faltantes = [];
+  neto.forEach((delta, k)=>{
+    const hay = inv.stock.get(k)||0;
+    if(hay + delta < 0){
+      const l = lineas.find(x=>invClave(x.material, x.medida)===k);
+      faltantes.push(`${l.materialNombre} ${l.medida} mm: hay ${hay}, salen ${saleTotal.get(k)}`);
+    }
+  });
+  if(faltantes.length) return res.status(409).json({ error: 'No alcanza el stock — no se registró nada.', detalles: faltantes, version: inv.version });
+
+  const movimiento = {
+    id: crypto.randomBytes(6).toString('hex'),
+    idCliente,
+    fecha: new Date().toISOString(),
+    usuario: usuarioDeSesion(req),
+    nota: String((req.body && req.body.nota) || '').trim().slice(0, 200) || null,
+    items: lineas
+  };
+  // primero el diario (si no se puede escribir, el pedido falla y el stock
+  // en memoria no se toca); después la memoria; la foto del stock al final
+  fs.appendFileSync(diarioPath(area), JSON.stringify(movimiento) + '\n', 'utf8');
+  aplicarAlStock(inv.stock, lineas);
+  inv.movimientos.push(movimiento);
+  if(idCliente) inv.porIdCliente.set(idCliente, movimiento);
+  inv.version++;
+  const stock = stockComoLista(inv), hoy = totalesDeHoy(inv);
+  programarFotoStock(area, inv);
+  notificar({ tipo:'inventario', area: area.id, version: inv.version, movimiento, stock, hoy });
+  res.json({ ok: true, version: inv.version, movimiento, stock, hoy });
+});
+
+/* ============ Cambios en vivo (Server-Sent Events) ============
+   Cada pestaña abierta de la app mantiene UNA conexión acá; cuando
+   alguien registra un movimiento o mueve algo del rack, el puente se lo
+   avisa al instante a todas. Reemplaza a las 30 PCs preguntando cada 6 s
+   "¿cambió algo?" (que además veían los cambios con hasta 6 s de atraso).
+   EventSource no puede mandar cabeceras: el API_TOKEN viaja como
+   ?api_token=... (ver el control de API_TOKEN de arriba). */
+const clientesEnVivo = new Set();
+function notificar(evento){
+  const datos = `data: ${JSON.stringify(evento)}\n\n`;
+  clientesEnVivo.forEach(res=>{ try { res.write(datos); } catch(e){ clientesEnVivo.delete(res); } });
+}
+app.get('/api/eventos', (req, res) => {
+  res.set({ 'Content-Type':'text/event-stream', 'Cache-Control':'no-cache', 'Connection':'keep-alive', 'X-Accel-Buffering':'no' });
+  res.flushHeaders();
+  res.write('retry: 3000\n\n'); // si se corta, el navegador reintenta a los 3 s
+  clientesEnVivo.add(res);
+  req.on('close', ()=>clientesEnVivo.delete(res));
+});
+// latido cada 20 s: mantiene viva la conexión (antivirus, proxies) y
+// permite detectar y soltar las pestañas que se cerraron sin avisar
+setInterval(()=>{ clientesEnVivo.forEach(res=>{ try { res.write(': ping\n\n'); } catch(e){ clientesEnVivo.delete(res); } }); }, 20000).unref();
 
 /* Resumen del día para Lista de corte: cuántas entraron y salieron del
    rack HOY, contra el historial de arriba. No hace falta guardar nada
    nuevo para esto — se calcula al vuelo cada vez que lo piden. */
 app.get('/api/rack-resumen-dia', exigirLogin, (req, res) => {
-  const historial = leerHistorial();
-  const deHoy = historial.filter(h=>esHoy(h.fecha));
+  const area = areaDe(req);
+  const deHoy = leerHistorial().filter(h=>esHoy(h.fecha) && esDelArea(h, area));
   res.json({
     cortadasHoy: deHoy.filter(h=>h.evento==='entrada').length,
     sacadasHoy: deHoy.filter(h=>h.evento==='salida').length,
-    enRackAhora: leerRackSimulado().length
+    enRackAhora: leerRackSimulado(area).length
   });
 });
 
@@ -846,10 +1196,12 @@ app.get('/api/dxf', exigirLogin, async (req, res) => {
     // modo SQL (default): el DXF viene de la base, no de un archivo
     const orden = req.query.orden;
     if(!orden) return res.status(400).json({ error: 'falta el parámetro "orden"' });
+    const area = areaDe(req);
+    const consulta = area.id==='papel' ? queries.dxfPorOrden : consultaDeArea(area, 'dxfPorOrden');
     const pool = await getPool();
     const result = await pool.request()
       .input('orden', sql.VarChar, orden)
-      .query(queries.dxfPorOrden);
+      .query(consulta);
     if(!result.recordset.length){
       return res.status(404).json({ error: `no se encontró la orden ${orden} (o no tiene DXF cargado)` });
     }
@@ -863,8 +1215,7 @@ app.get('/api/dxf', exigirLogin, async (req, res) => {
     const contenido = Buffer.isBuffer(raw) ? raw.toString('utf8') : String(raw);
     res.json({ contenido });
   } catch (err) {
-    console.error('[dxf]', err.message);
-    res.status(500).json({ error: err.message });
+    responderError(res, 'dxf', err);
   }
 });
 
@@ -886,7 +1237,17 @@ function bloquearSiSoloLectura(req, res, next){
 }
 
 /* ============ 3) Marcar una orden como ya cortada / en stock ============ */
-app.post('/api/ordenes/:orden/marcar-en-stock', exigirLogin, bloquearSiSoloLectura, async (req, res) => {
+/* El rack en SQL (tabla NestingControlCorte) existe solo para papel
+   cerámico; Tecoflex y Mallas se manejan con el rack simulado del puente
+   hasta que tengan su propia tabla. */
+function exigirRackSql(req, res, next){
+  let area;
+  try { area = areaDe(req); } catch(e){ return responderError(res, 'rack-sql', e); }
+  if(area.rackSql) return next();
+  res.status(501).json({ error: `El rack de ${area.nombre} todavía no tiene tabla en SQL — se maneja simulado en el puente.`, pendiente: true });
+}
+
+app.post('/api/ordenes/:orden/marcar-en-stock', exigirLogin, exigirRackSql, bloquearSiSoloLectura, async (req, res) => {
   try {
     const { orden } = req.params;
     const { rack } = req.body || {};
@@ -910,6 +1271,7 @@ app.post('/api/ordenes/:orden/marcar-en-stock', exigirLogin, bloquearSiSoloLectu
     // queries.js) trae la ubicación que quedó asignada, para que la
     // app pueda armar el sticker sin tener que consultar de nuevo.
     const ubicacion = result.recordset && result.recordset[0] ? result.recordset[0].ubicacion : null;
+    notificar({ tipo:'rack', area: 'papel' });
     res.json({ ok: true, ubicacion });
   } catch (err) {
     console.error('[marcar-en-stock]', err.message);
@@ -918,7 +1280,7 @@ app.post('/api/ordenes/:orden/marcar-en-stock', exigirLogin, bloquearSiSoloLectu
 });
 
 /* ============ 4) Órdenes que están ahora mismo en el rack ============ */
-app.get('/api/rack-actual', async (req, res) => {
+app.get('/api/rack-actual', exigirRackSql, async (req, res) => {
   try {
     const pool = await getPool();
     const result = await pool.request().query(queries.rackActual);
@@ -945,13 +1307,14 @@ app.get('/api/rack-actual', async (req, res) => {
 // escritura ya está apagada por default (PERMITIR_ESCRITURA_SQL=false), así
 // que esto no podía escribir nada de todas formas — pero si el día de
 // mañana alguien prende esa bandera, que quede protegido igual que el resto.
-app.post('/api/rack/:orden/salida', exigirLogin, bloquearSiSoloLectura, async (req, res) => {
+app.post('/api/rack/:orden/salida', exigirLogin, exigirRackSql, bloquearSiSoloLectura, async (req, res) => {
   try {
     const { orden } = req.params;
     const pool = await getPool();
     await pool.request()
       .input('orden', sql.VarChar, orden)
       .query(queries.rackSalida);
+    notificar({ tipo:'rack', area: 'papel' });
     res.json({ ok: true });
   } catch (err) {
     console.error('[rack/salida]', err.message);
@@ -968,7 +1331,7 @@ app.get('/api/salud', (req, res) => res.json({ ok: true, hora: new Date().toISOS
 app.use((err, req, res, next) => {
   console.error(`[error] ${req.method} ${req.originalUrl}:`, err.message);
   if(res.headersSent) return next(err);
-  res.status(500).json({ error: err.message });
+  res.status(err.status || 500).json({ error: err.message, pendiente: !!err.pendiente });
 });
 
 /* Sin decirle una dirección puntual, Node ya escucha en TODAS las
@@ -978,6 +1341,12 @@ app.use((err, req, res, next) => {
    que sea fácil de encontrar, se imprime acá abajo apenas arranca.
    (direccionesDeRed y PORT se calculan arriba de todo, junto con el
    filtro de CORS — acá abajo solo se reusan para el cartel.) */
+// los inventarios se cargan al arrancar (no con el primer pedido): si un
+// diario tiene problemas se ve ya en esta ventana, y nadie espera la carga
+Object.values(AREAS_CONFIG.areas).filter(a=>a.rack.tipo==='inventario').forEach(a=>{
+  const inv = inventarioDe(a);
+  console.log(`Inventario de ${a.nombre}: ${inv.version} movimiento(s) cargados.`);
+});
 app.listen(PORT, () => {
   console.log(`Puente "Lista de corte" escuchando en http://localhost:${PORT}`);
   const ips = direccionesDeRed();

@@ -1,2 +1,8 @@
 *.env
 /server/node_modules
+
+# datos del inventario de Tecoflex (viven en la PC del puente, no en git)
+/server/inventario-*.json
+/server/movimientos-*.json
+/server/movimientos-*.jsonl
+/server/movimientos-*.json.migrado

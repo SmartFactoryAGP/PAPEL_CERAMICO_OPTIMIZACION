@@ -36,6 +36,15 @@ const ORD_COLUMNAS = [
   {campo:'Descricao', etiqueta:'Descricao'},
   {campo:'ARCHIVO', etiqueta:'Archivo'},
 ];
+function ordColumnas(){ return ORD_COLUMNAS; }
+/* Mensaje de error legible de una respuesta del puente: si la consulta
+   de esta área todavía no está configurada (501), lo dice tal cual. */
+async function ordErrorDeRespuesta(res){
+  const data = await res.json().catch(()=>({}));
+  const e = new Error(data.error || ('HTTP '+res.status));
+  e.pendiente = !!data.pendiente;
+  return e;
+}
 
 /* El Rack puede simularse (mientras no haya permiso para crear la
    tabla de control) — ver la casilla "Simular el Rack". Cuando está
@@ -84,11 +93,15 @@ function ordBridgeUrl(){ return document.getElementById('ordBridgeUrl').value.re
 /* El Rack puede simularse independientemente de todo lo demás — es lo
    que decide si "confirmar"/"sacar del rack" escriben en SQL o se
    manejan en el archivo compartido del puente. */
-function ordRackEsSimulado(){ return document.getElementById('ordSimRack').checked; }
-/* Si cargaste una clave (porque el puente tiene API_TOKEN configurado), se manda en todos los pedidos. */
+/* Solo papel cerámico tiene tabla de rack en SQL: Tecoflex y Mallas usan
+   siempre el rack simulado (compartido) del puente. */
+function ordRackEsSimulado(){ return !areaActual().rackSql || document.getElementById('ordSimRack').checked; }
+/* Si cargaste una clave (porque el puente tiene API_TOKEN configurado), se manda en todos los pedidos.
+   También va el área de trabajo activa (x-area): el puente la usa para
+   elegir la consulta y el archivo de rack de esa área. */
 function ordApiHeaders(extra){
   const token = document.getElementById('ordApiToken').value.trim();
-  const conApiToken = Object.assign({}, extra||{}, token ? {'x-api-token': token} : {});
+  const conApiToken = Object.assign({'x-area': areaActualId}, extra||{}, token ? {'x-api-token': token} : {});
   // suma también el token de sesión (login), si hay uno — así los
   // pedidos a Lista de corte quedan identificados con qué usuario los
   // hizo, sin que cada función tenga que acordarse de juntar los dos.
@@ -103,7 +116,7 @@ async function ordRefrescar(){
   status.textContent = 'Consultando...';
   try {
     const res = await fetch(ordBridgeUrl()+'/api/ordenes-pendientes', {headers: ordApiHeaders()});
-    if(!res.ok) throw new Error('HTTP '+res.status);
+    if(!res.ok) throw await ordErrorDeRespuesta(res);
     let pendientes = await res.json();
     let nota = '';
     if(ordRackEsSimulado()){
@@ -131,7 +144,9 @@ async function ordRefrescar(){
 
     status.textContent = `Conectado — ${ordenesPendientes.length} pendiente(s)${nota}`;
   } catch(e){
-    status.textContent = 'No se pudo conectar al puente (¿está corriendo el servidor en tu PC?): '+e.message;
+    status.textContent = e.pendiente
+      ? e.message
+      : 'No se pudo conectar al puente (¿está corriendo el servidor en tu PC?): '+e.message;
     ordenesPendientes = [];
   }
   ordRenderTabla();
@@ -221,7 +236,7 @@ function ordEncabezadoOrdenable(col){
    que pasa siempre por escapeHtml. Ordem_Serial se muestra tal cual (sin
    el "—" de relleno), igual que antes. */
 function ordCeldasHtml(o){
-  return ORD_COLUMNAS.map(c=>{
+  return ordColumnas().map(c=>{
     const v = c.campo==='Ordem_Serial' ? o.Ordem_Serial : (o[c.campo]||'—');
     return `<td>${escapeHtml(v)}</td>`;
   }).join('\n      ');
@@ -252,7 +267,7 @@ function ordRenderTabla(){
       : '<div class="empty">Todas las órdenes pendientes ya están en el lote actual.</div>';
     return;
   }
-  const headerHtml = ORD_COLUMNAS.map(ordEncabezadoOrdenable).join('');
+  const headerHtml = ordColumnas().map(ordEncabezadoOrdenable).join('');
   const rows = ordenadas.map(o=>`
     <tr>
       ${ordCeldasHtml(o)}
@@ -282,7 +297,7 @@ function ordRenderLote(){
   }
   const indice = ordIndicePendientes();
   const filas = [...ordEnLoteIds].map(id=>indice.get(id)).filter(Boolean);
-  const headerHtml = ORD_COLUMNAS.map(c=>`<th>${c.etiqueta}</th>`).join('');
+  const headerHtml = ordColumnas().map(c=>`<th>${c.etiqueta}</th>`).join('');
   const rows = filas.map(o=>{
     const estado = ordLoteEstado.get(String(o.Ordem_Serial));
     const marca = estado==='colocada'
@@ -305,6 +320,9 @@ function ordRenderLote(){
 function ordActualizarBotonEjecutar(){
   document.getElementById('ordRunBtn').disabled = ordEnLoteIds.size===0;
   document.getElementById('ordLoteCount').textContent = String(ordEnLoteIds.size);
+  // un área sin nesting (Mallas) confirma el lote directo al Rack: el
+  // botón se habilita apenas hay algo en el lote, sin "Ejecutar" previo
+  if(!areaActual().nesting) document.getElementById('ordConfirmBtn').disabled = ordEnLoteIds.size===0;
 }
 
 /* Agrega/saca una orden del "lote actual". Agregarla la hace desaparecer
@@ -631,34 +649,52 @@ async function ordImprimirStickersConFallback(ordenesConUbicacion){
   }
 }
 
+/* Los datos de la orden que se guardan en el rack simulado. ARCHIVO va
+   también — si no, una reimpresión del sticker más adelante saldría con
+   "—" en vez del nombre real. */
+function ordCamposRack(orden){
+  const c = {
+    Ordem_Serial:orden.Ordem_Serial, Operation:orden.Operation, Centro_Trabalho:orden.Centro_Trabalho,
+    Puestodetrabajo:orden.Puestodetrabajo, ClaveModelo:orden.ClaveModelo, CodMat:orden.CodMat,
+    Name:orden.Name, ZTipo:orden.ZTipo, Descricao:orden.Descricao, ARCHIVO:orden.ARCHIVO
+  };
+  if(orden.Medida!=null) c.Medida = orden.Medida;
+  return c;
+}
+
 async function ordConfirmar(){
-  if(!ordLote.length) return;
+  const area = areaActual();
+  // Qué va al rack: con nesting, solo lo que quedó ubicado en una chapa
+  // (lo que no se pudo cortar no se manda); sin nesting (Mallas), todo
+  // el lote actual tal cual.
+  let candidatas;
+  if(area.nesting){
+    if(!ordLote.length) return;
+    const colocadasIds = new Set();
+    lastResult.chapas.forEach(c=>c.placed.forEach(p=>colocadasIds.add(p.pieceId)));
+    candidatas = ordLote.filter(x=>colocadasIds.has(x.pieceId)).map(x=>x.orden);
+  } else {
+    const indice = ordIndicePendientes();
+    candidatas = [...ordEnLoteIds].map(id=>indice.get(id)).filter(Boolean);
+  }
+  if(!candidatas.length) return;
+
   const status = document.getElementById('ordRunStatus');
   const confirmBtn = document.getElementById('ordConfirmBtn');
   confirmBtn.disabled = true;
   const url = ordBridgeUrl();
   const sim = ordRackEsSimulado();
 
-  const colocadasIds = new Set();
-  lastResult.chapas.forEach(c=>c.placed.forEach(p=>colocadasIds.add(p.pieceId)));
-
-  status.textContent = 'Generando el PDF del lote...';
-  try { await exportPDF(); } catch(e){ status.textContent = 'No se pudo generar el PDF: '+e.message; }
+  if(area.nesting){
+    status.textContent = 'Generando el PDF del lote...';
+    try { await exportPDF(); } catch(e){ status.textContent = 'No se pudo generar el PDF: '+e.message; }
+  }
 
   let marcadas=0; const fallidas=[]; const confirmadasIds=[]; const confirmadasConUbicacion=[];
-  for(const {orden, pieceId} of ordLote){
-    if(!colocadasIds.has(pieceId)) continue; // no se manda al rack lo que no se pudo cortar
-
+  for(const orden of candidatas){
     if(sim){
       try {
-        // ARCHIVO va acá también (antes no se mandaba) — si no, el rack
-        // simulado se queda sin el nombre del archivo, y una reimpresión
-        // del sticker más adelante saldría con "—" en vez del nombre real.
-        const { ubicacion } = await rackSimuladoAgregar({
-          Ordem_Serial:orden.Ordem_Serial, Operation:orden.Operation, Centro_Trabalho:orden.Centro_Trabalho,
-          Puestodetrabajo:orden.Puestodetrabajo, ClaveModelo:orden.ClaveModelo, CodMat:orden.CodMat,
-          Name:orden.Name, ZTipo:orden.ZTipo, Descricao:orden.Descricao, ARCHIVO:orden.ARCHIVO
-        });
+        const { ubicacion } = await rackSimuladoAgregar(ordCamposRack(orden));
         marcadas++;
         confirmadasIds.push(orden.Ordem_Serial);
         confirmadasConUbicacion.push({ orden, ubicacion });
@@ -684,7 +720,7 @@ async function ordConfirmar(){
   }
 
   let notaStickers = '';
-  if(confirmadasConUbicacion.length){
+  if(confirmadasConUbicacion.length && area.stickers){
     status.textContent = 'Mandando los stickers a la Zebra...';
     notaStickers = await ordImprimirStickersConFallback(confirmadasConUbicacion);
   }
@@ -818,8 +854,11 @@ async function rackReingresar(ordenSerial, ubicacion){
    pestaña o después de una acción propia) se comporta igual que
    siempre. */
 async function rackRender(silencioso){
+  // Tecoflex: el rack es un inventario por material y medida (inventario.js)
+  if(areaActual().rack.tipo==='inventario') return invRender(silencioso);
   const wrap = document.getElementById('rackWrap');
   const sim = ordRackEsSimulado();
+  const areaPedida = areaActualId;
   let lista;
 
   if(!silencioso) wrap.innerHTML = '<div class="empty">Consultando el rack...</div>';
@@ -830,13 +869,16 @@ async function rackRender(silencioso){
       return res.json();
     })();
   } catch(e){
-    if(silencioso) return; // un refresco automático que falla (por una red lenta, un timeout) no debe borrar lo que ya se estaba viendo
+    if(silencioso || areaPedida!==areaActualId) return; // un refresco automático que falla (por una red lenta, un timeout) no debe borrar lo que ya se estaba viendo
     document.getElementById('rackCount').textContent = '—';
     wrap.innerHTML = `<div class="empty">No se pudo traer el rack del puente: ${escapeHtml(e.message)}</div>`;
     rackListaActual = [];
     rackUltimaFirma = null;
     return;
   }
+  // la respuesta es de un área que ya no está activa (se cambió de área
+  // mientras el pedido iba y volvía): se descarta, no se mezcla
+  if(areaPedida!==areaActualId) return;
   rackListaActual = lista; // para que el buscador (código de barras) tenga contra qué comparar
   // el refresco automático (cada 6 s, en cada PC) casi siempre trae
   // exactamente lo mismo: en ese caso no se toca el DOM (antes se
@@ -845,7 +887,14 @@ async function rackRender(silencioso){
   const firma = JSON.stringify(lista);
   if(silencioso && firma===rackUltimaFirma) return;
   rackUltimaFirma = firma;
+  rackDibujar();
+}
 
+/* Dibuja rackListaActual (rack de casillas: papel cerámico, mallas). */
+function rackDibujar(){
+  const wrap = document.getElementById('rackWrap');
+  const lista = rackListaActual;
+  const area = areaActual();
   document.getElementById('rackCount').textContent = lista.length;
   if(!lista.length){
     wrap.innerHTML = '<div class="empty">Todavía no hay ninguna orden en el rack.</div>';
@@ -858,12 +907,12 @@ async function rackRender(silencioso){
     const serialHtml = escapeHtml(o.Ordem_Serial);
     return `
     <tr>
-      <td><b style="color:var(--accent);font-family:var(--font-mono)">${escapeHtml(o.ubicacion)}</b></td>
+      <td><span class="rackLoc">${escapeHtml(o.ubicacion)}</span></td>
       <td>${serialHtml}</td>
       ${RACK_CAMPOS.map(c=>`<td>${escapeHtml(o[c]||'—')}</td>`).join('\n      ')}
-      <td style="white-space:nowrap">
-        <button class="secondary rackReimprimirBtn" data-orden="${serialHtml}" style="padding:6px 10px;font-size:11px">🖨 Reimprimir sticker</button>
-        <button class="secondary rackSalidaBtn" data-orden="${serialHtml}" style="padding:6px 10px;font-size:11px;margin-left:6px">Sacar del rack</button>
+      <td class="rowActions">
+        ${area.stickers ? `<button class="secondary btnSm rackReimprimirBtn" data-orden="${serialHtml}">Reimprimir sticker</button>` : ''}
+        <button class="secondary btnSm rackSalidaBtn" data-orden="${serialHtml}">Sacar del rack</button>
       </td>
     </tr>`;
   }).join('');
@@ -873,6 +922,37 @@ async function rackRender(silencioso){
   </table>`;
 }
 
+/* Texto de capacidad del Rack según el área. */
+function rackActualizarCapacidad(){
+  const area = areaActual(), el = document.getElementById('rackCapacidad');
+  if(!el || area.rack.tipo!=='casillas') return;
+  const r = area.rack, ultima = r.letras[r.letras.length-1] + r.porLetra;
+  el.textContent = `Las ubicaciones van de ${r.letras[0]}1 a ${ultima} (${r.letras.length*r.porLetra} lugares), una orden por casilla.`;
+}
+
+/* Al cambiar de área: todo lo de Lista de corte y Rack es de OTRA área,
+   así que se limpia (nada se mezcla) y se vuelve a pedir lo nuevo. */
+alCambiarArea(()=>{
+  ordenesPendientes = [];
+  ordEnLoteIds.clear();
+  ordLoteEstado.clear();
+  ordLote = [];
+  pieces = pieces.filter(p=>!p.isOrdenLote);
+  if(typeof renderPieceTable==='function') renderPieceTable();
+  rackListaActual = []; rackUltimaFirma = null;
+  document.getElementById('ordBridgeStatus').textContent = ' ';
+  document.getElementById('ordRunStatus').textContent = ' ';
+  document.getElementById('ordResumenDia').textContent = '—';
+  document.getElementById('ordConfirmBtn').disabled = true;
+  const res = document.getElementById('rackBuscarResultado'); res.style.display = 'none';
+  document.getElementById('ordTableWrap').innerHTML = '<div class="empty">Tocá "Actualizar lista de pendientes" para traer las órdenes.</div>';
+  ordRenderLote();
+  ordActualizarBotonEjecutar();
+  rackActualizarCapacidad();
+  rackRender();
+});
+rackActualizarCapacidad();
+
 /* ===== Auto-refresco del Rack (para que un "sacar del rack" hecho en
    OTRA PC se vea acá sin tener que apretar F5 a mano) =====
    Solo corre mientras la pestaña del Rack está activa Y la ventana del
@@ -881,13 +961,22 @@ async function rackRender(silencioso){
    de más al puente). rackIniciarPolling() se puede llamar varias veces
    seguidas sin problema (por ej. si por error se llama dos veces al
    entrar a la pestaña): siempre limpia el intervalo anterior primero. */
-let rackPollingId = null;
+/* Con la conexión en vivo activa (tiempo-real.js) los cambios llegan solos
+   al instante, y esto queda solo como red de seguridad cada 60 s; sin ella
+   (puente viejo, conexión caída) vuelve a preguntar cada 6 s. Con 30 PCs,
+   preguntar siempre cada 6 s eran ~5 pedidos por segundo al puente. */
+let rackPollingId = null, rackUltimoPoll = 0;
 const RACK_POLLING_MS = 6000;
+const RACK_POLLING_EN_VIVO_MS = 60000;
 
 function rackIniciarPolling(){
   rackDetenerPolling();
+  rackUltimoPoll = Date.now();
   rackPollingId = setInterval(()=>{
     if(document.hidden) return; // pestaña del navegador no visible ahora mismo — no pedir nada
+    const espera = (typeof trConectado!=='undefined' && trConectado) ? RACK_POLLING_EN_VIVO_MS : RACK_POLLING_MS;
+    if(Date.now() - rackUltimoPoll < espera - 500) return; // -500: el intervalo nunca cae exacto
+    rackUltimoPoll = Date.now();
     rackRender(true);
   }, RACK_POLLING_MS);
 }

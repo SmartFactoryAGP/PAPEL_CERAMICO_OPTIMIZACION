@@ -1,3 +1,36 @@
+# Materiales Semiterminados — AGP Colombia
+
+> **Áreas de trabajo (octubre 2026).** La app ahora tiene tres áreas, que
+> se eligen al ingresar o desde la barra superior:
+>
+> | Área | Pestañas | Rack |
+> |---|---|---|
+> | Papel cerámico | Lista de corte, Nesting, Rack, Editor de archivos | Casillas A1–G20, una orden por casilla, con sticker |
+> | Tecoflex | Lista de corte (vacía por ahora), Nesting, Rack | **Inventario** por material y medida (5 materiales con su código SAP; 9 a 70 mm, salvo el *Tecoflex Rombos 1,27* 100004045, de X5, que tiene solo 6,5 / 12 / 16 / 20 / 21 / 28). Entradas y salidas en cantidad con un carrito para movimientos en lote. No va por órdenes, sin sticker |
+> | Mallas | Lista de corte, Rack | Casillas A1–G20 propias, con sticker. Sin nesting: el lote se confirma directo al Rack |
+>
+> - **Configuración:** todo lo de cada área (pestañas, posiciones, materiales) vive en
+>   `js/core/areas-config.js`. Lo usan la app y el puente, así que se cambia en un solo lugar.
+> - **Inventario de Tecoflex:**
+>   - **Diario:** `server/movimientos-tecoflex.jsonl` guarda una línea por movimiento y solo crece.
+>     Es la fuente de verdad: el puente reconstruye el stock con él al arrancar.
+>   - **Foto del stock:** `server/inventario-tecoflex.json` es solo una copia legible.
+>   - **Lotes del carrito:** cada lote se aplica entero o no se aplica, y el mismo carrito
+>     enviado dos veces se registra una sola vez.
+> - **Tiempo real:**
+>   - Cada pestaña mantiene una conexión en vivo con el puente (`/api/eventos`), así que
+>     los movimientos y los cambios del rack se ven al instante en todas las PCs.
+>   - El indicador "En vivo" de la barra muestra el estado de la conexión.
+>   - Probado con 30 operarios registrando a la vez y 35 pestañas abiertas.
+> - **Racks separados:** cada área tiene su propio archivo de rack en el puente.
+>   Papel cerámico sigue usando `rack-simulado.json`; los nuevos son
+>   `rack-tecoflex.json` y `rack-mallas.json`.
+> - **Pendiente:** las consultas SQL de Tecoflex y Mallas (son otras tablas).
+>   Van en `server/queries.js → areas.tecoflex` / `areas.mallas`; el formato está
+>   explicado en `queries.example.js`. Mientras falten, Lista de corte de esas
+>   áreas avisa "consulta pendiente de configurar"; el Rack ya funciona.
+> - **Importante:** después de actualizar los archivos hay que **reiniciar el puente**.
+
 # Nesting DXF — v4 (modular)
 
 Esta es la **V1** del plan que armaste: separar el archivo único de 2147 líneas

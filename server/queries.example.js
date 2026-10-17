@@ -154,5 +154,26 @@ module.exports = {
     columnaOrden: 'Orden',              // TODO: columna que compara contra Ordem_Serial
     columnaPuesto: 'Puestodetrabajo',   // TODO
     columnaZfer: null                   // TODO opcional: columna de ZFER en esa misma tabla, o null/'' si no aplica
+  },
+
+  /* Consultas de las OTRAS áreas de trabajo (Tecoflex, Mallas) — viven en
+     tablas distintas a las de papel cerámico. Mientras una consulta no
+     esté acá, la app muestra "consulta pendiente de configurar" en esa
+     área (nada se rompe). Cada una tiene que devolver las mismas
+     columnas que las de papel cerámico (Ordem_Serial, Operation,
+     ClaveModelo, CodMat, Name, ZTipo, Descricao, ARCHIVO), con esos
+     mismos alias. Tecoflex además puede devolver "Medida" (la posición
+     del rack en mm, 6,5 a 70): si viene, se sugiere sola al confirmar.
+       - ordenesPendientes: la lista de corte de esa área
+       - ordenPorSerial:    una orden por número (parámetro @orden)
+       - ordenesPorLote:    las órdenes de un código de lote (parámetro @lote)
+       - dxfPorOrden:       solo si DXF_SOURCE=sql (parámetro @orden) */
+  areas: {
+    tecoflex: {
+      // ordenesPendientes: `SELECT ... AS "Ordem_Serial", ... AS "ARCHIVO", ... AS "Medida" FROM dbo.TU_TABLA_TECOFLEX WHERE ...`,
+    },
+    mallas: {
+      // ordenesPendientes: `SELECT ... AS "Ordem_Serial", ... FROM dbo.TU_TABLA_MALLAS WHERE ...`,
+    }
   }
 };
