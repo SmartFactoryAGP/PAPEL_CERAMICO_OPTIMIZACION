@@ -1,8 +1,17 @@
+# secretos: el .env y CUALQUIER copia suya (.env.bak, .env.viejo, .env.antes-...)
 *.env
+.env*
+!.env.example
 /server/node_modules
 
-# datos del inventario de Tecoflex (viven en la PC del puente, no en git)
+# datos de la planta (viven en la PC del puente, nunca en git: el repositorio es público)
+/server/datos/
+/server/rack-*.json
 /server/inventario-*.json
 /server/movimientos-*.json
 /server/movimientos-*.jsonl
 /server/movimientos-*.json.migrado
+/server/usuarios.json
+*.tmp
+/tools/pruebas/capturas/
+/tools/migracion/salida/

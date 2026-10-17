@@ -1,16 +1,17 @@
-const APP_VISTAS = {nesting:'viewNesting', repair:'viewRepair', ordenes:'viewOrdenes', rack:'viewRack'};
-const APP_TABS   = {nesting:'tabNesting', repair:'tabRepair', ordenes:'tabOrdenes', rack:'tabRack'};
-const APP_REQUIERE_LOGIN = {nesting:true, repair:true, ordenes:true, rack:false};
+const APP_VISTAS = {nesting:'viewNesting', repair:'viewRepair', ordenes:'viewOrdenes', rack:'viewRack', usuarios:'viewUsuarios'};
+const APP_TABS   = {nesting:'tabNesting', repair:'tabRepair', ordenes:'tabOrdenes', rack:'tabRack', usuarios:'tabUsuarios'};
 let appVistaActual = null;
 
 function switchView(view){
-  // una pestaña que el área activa no tiene (por ej. Nesting en Mallas)
-  // no se abre — se cae al Rack, que todas las áreas tienen
-  if(typeof areaTieneVista==='function' && !areaTieneVista(view)) view = 'rack';
-  if(APP_REQUIERE_LOGIN[view] && typeof authEstaLogueado==='function' && !authEstaLogueado()){
+  // toda la app pide sesión
+  if(typeof authEstaLogueado==='function' && !authEstaLogueado()){
     if(typeof authMostrarLogin==='function') authMostrarLogin();
-    return; // se queda donde estaba, no cambia de pestaña
+    return;
   }
+  // una pestaña que el área no tiene, o que el usuario no tiene habilitada,
+  // no se abre: se va a la primera que sí pueda ver
+  if(!areaTieneVista(view)) view = areaPrimeraVista();
+  if(!view) return;
   const cambio = view !== appVistaActual;
   appVistaActual = view;
   Object.keys(APP_VISTAS).forEach(k=>{
@@ -21,19 +22,17 @@ function switchView(view){
     if(k===view && cambio){ el.classList.remove('viewEnter'); void el.offsetWidth; el.classList.add('viewEnter'); }
     document.getElementById(APP_TABS[k]).classList.toggle('active', k===view);
   });
-  // Auto-refresco del Rack: solo mientras esa pestaña está activa. Se
-  // controla acá (no solo en el click de tabRack) para que también se
-  // apague/prenda bien cuando switchView('rack') se llama desde otro
-  // lado (ej. auth.js al cerrar sesión).
+  // Auto-refresco del Rack: solo mientras esa pestaña está activa.
   if(view==='rack'){ if(typeof rackIniciarPolling==='function') rackIniciarPolling(); }
   else { if(typeof rackDetenerPolling==='function') rackDetenerPolling(); }
+  if(view==='usuarios' && typeof usrCargar==='function') usrCargar();
 }
 /* Pantalla de ingreso (login + área) vs. la app en sí. */
 function appMostrarApp(vista){
   document.getElementById('loginScreen').hidden = true;
   document.getElementById('appShell').hidden = false;
-  switchView(vista || 'rack');
-  if((vista||'rack')==='rack' && typeof rackRender==='function') rackRender();
+  switchView(vista || areaPrimeraVista());
+  if(appVistaActual==='rack' && typeof rackRender==='function') rackRender();
 }
 function appMostrarIngreso(){
   if(typeof rackDetenerPolling==='function') rackDetenerPolling();
@@ -45,7 +44,12 @@ document.getElementById('tabNesting').addEventListener('click', ()=>switchView('
 document.getElementById('tabRepair').addEventListener('click', ()=>switchView('repair'));
 document.getElementById('tabOrdenes').addEventListener('click', ()=>switchView('ordenes'));
 document.getElementById('tabRack').addEventListener('click', ()=>{ switchView('rack'); if(typeof rackRender==='function') rackRender(); });
+document.getElementById('tabUsuarios').addEventListener('click', ()=>switchView('usuarios'));
 
-// arranque: con sesión abierta se entra directo; sin sesión, la pantalla de ingreso
-if(typeof authEstaLogueado==='function' && authEstaLogueado()) appMostrarApp('ordenes');
-else appMostrarIngreso();
+// arranque: con sesión guardada se confirma con el puente (por si vencio o
+// cambiaron los permisos) y se entra; si no, la pantalla de ingreso
+appMostrarIngreso();
+authRefrescarSesion().then(sigue=>{
+  if(!sigue) return authMostrarLogin();
+  if(!authEntrar(areaActualId)){ authBorrarSesion(); authMostrarLogin(); }
+});

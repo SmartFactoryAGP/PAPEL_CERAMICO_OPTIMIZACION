@@ -10,7 +10,7 @@
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Manrope:wght@600;700;800&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;700&display=swap">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
-<link rel="stylesheet" href="css/styles.css?v=20261017e">
+<link rel="stylesheet" href="css/styles.css?v=20261018b">
 </head>
 <body data-area="papel">
 
@@ -62,8 +62,9 @@
       <div class="formError" id="authLoginError" role="alert" hidden></div>
 
       <button type="submit" class="btnLg" id="authLoginConfirmBtn"><span>Ingresar</span></button>
-      <button type="button" class="btnGhost" id="authRackOnlyBtn">Ver solo el Rack, sin contraseña →</button>
     </form>
+
+
   </main>
 </section>
 
@@ -83,13 +84,9 @@
     <nav class="areaSwitch" id="areaSwitch" role="tablist" aria-label="Área de trabajo"></nav>
 
     <div class="sessionBox">
-      <div id="authLoggedOut" class="sessionOut">
-        <span class="sessionHint">Solo Rack</span>
-        <button class="btnOnDark" id="authLoginBtn">Iniciar sesión</button>
-      </div>
       <div id="authLoggedIn" class="sessionIn" hidden>
         <span class="avatar" id="authAvatar" aria-hidden="true">·</span>
-        <span class="sessionUser" id="authUsuarioActual"></span>
+        <span class="sessionUser" id="authUsuarioActual"></span><em class="rolTag onDark" id="authRolActual" hidden>Admin</em>
         <button class="btnOnDark" id="authLogoutBtn">Cerrar sesión</button>
       </div>
     </div>
@@ -101,6 +98,7 @@
       <button class="viewTab" id="tabNesting" data-view="nesting" data-requiere="1">Nesting</button>
       <button class="viewTab active" id="tabRack" data-view="rack">Rack</button>
       <button class="viewTab" id="tabRepair" data-view="repair" data-requiere="1">Editor de archivos</button>
+      <button class="viewTab tabAdmin" id="tabUsuarios" data-view="usuarios" hidden>Usuarios</button>
     </div>
     <div class="subbarRight"><span class="liveTag" id="liveTag" title="Conectando…"><i></i><span>Conectando…</span></span><div class="areaTag"><span class="areaDot"></span><span data-area-nombre>Papel cerámico</span></div></div>
   </div>
@@ -470,17 +468,54 @@
       <label class="chk" style="margin:0"><input type="checkbox" id="invSoloConStock" checked> Solo medidas con stock</label>
     </div>
     <div class="hint" style="margin-top:-6px">Tocá una celda para elegirla · <b>arrastrá</b> (o Shift+clic) para elegir un bloque · Ctrl+clic suma · tocá el nombre de un material o una medida para elegirla entera.</div>
+    <div class="invLeyenda" aria-label="Cómo leer la tabla">
+      <span><b class="lgNum">11</b> stock real ahora</span>
+      <span><b class="lgPend entra">entra 11 → 22</b><b class="lgPend sale">sale 4 → 7</b> en tu carrito, sin registrar todavía · → cómo quedaría</span>
+      <span><i class="lgSel"></i> elegida para agregar</span>
+      <span><b class="lgNa">—</b> ese material no tiene esa medida</span>
+    </div>
     <div class="tableWrap invMatrizWrap" id="invMatriz"><div class="empty">Cargando el inventario...</div></div>
     <div class="panelHead"><h3>Movimientos recientes</h3></div>
     <div class="tableWrap invMovsWrap" id="invMovs"><div class="empty">—</div></div>
   </div>
 </div>
 
+<!-- ============================== USUARIOS (solo administradores) ============================== -->
+<div class="layout" id="viewUsuarios" style="display:none">
+  <div class="panel controls">
+    <div class="panelHead"><h3>Usuarios</h3><span class="cartCount" id="usrCount">0</span></div>
+    <div class="hint" style="margin-top:-6px">Quién puede entrar y qué ve en cada área. Los cambios rigen al instante, aunque la persona ya tenga la sesión abierta.</div>
+    <button type="button" id="usrNuevoBtn">+ Nuevo usuario</button>
+    <div class="usrLista" id="usrLista"><div class="empty">Cargando…</div></div>
+  </div>
+  <div class="panel stagepanel">
+    <form class="usrForm" id="usrForm" novalidate>
+      <div class="panelHead"><h3 id="usrTitulo">Usuario</h3><span class="hint" id="usrMeta"></span></div>
+      <div class="row2">
+        <div class="field" id="usrNombreField"><label for="usrNombre">Usuario</label><input type="text" id="usrNombre" autocomplete="off" maxlength="40" placeholder="ej: jperez"></div>
+        <div class="field">
+          <label for="usrClave" id="usrClaveLabel">Contraseña</label>
+          <div class="claveRow"><input type="password" id="usrClave" autocomplete="new-password" placeholder="mínimo 6 caracteres"><button type="button" class="linkBtn" id="usrClaveToggle">Ver</button></div>
+        </div>
+      </div>
+      <div class="usrToggles">
+        <label class="chk"><input type="checkbox" id="usrActivo" checked> Activo <span class="hint">(si lo desactivás, no puede entrar y se le cierra la sesión)</span></label>
+        <label class="chk"><input type="checkbox" id="usrAdmin"> Administrador <span class="hint">(ve todo y administra usuarios)</span></label>
+      </div>
+      <div class="panelHead" style="margin-top:6px"><h3>Vistas habilitadas</h3><span class="hint" id="usrPermisosNota" hidden>El administrador ve todas las vistas de todas las áreas.</span></div>
+      <div class="tableWrap"><table class="ordTable permTable" id="usrPermisos"></table></div>
+      <div class="usrAcciones">
+        <button type="submit" id="usrGuardarBtn">Guardar</button>
+        <button type="button" class="secondary" id="usrEliminarBtn" hidden>Eliminar usuario</button>
+        <span class="hint" id="usrMsg">&nbsp;</span>
+      </div>
+    </form>
+  </div>
+</div>
   </main>
 </div>
 
-<!-- ======================= HISTORIAL DE INTENTOS ======================= -->
-<div class="logOverlay" id="logOverlay" style="display:none">
+<!-- ======================= HISTORIAL DE INTENTOS ======================= --><div class="logOverlay" id="logOverlay" style="display:none">
   <div class="logPanel">
     <div class="logPanelHead">
       <div>
@@ -511,50 +546,51 @@
 </div>
 
 <!-- ===== núcleo geométrico (sin dependencias del resto) ===== -->
-<script src="js/core/geometry.js?v=20261017e"></script>
-<script src="js/core/polygon.js?v=20261017e"></script>
-<script src="js/core/transform.js?v=20261017e"></script>
-<script src="js/core/areas-config.js?v=20261017e"></script>
+<script src="js/core/geometry.js?v=20261018b"></script>
+<script src="js/core/polygon.js?v=20261018b"></script>
+<script src="js/core/transform.js?v=20261018b"></script>
+<script src="js/core/areas-config.js?v=20261018b"></script>
 
 <!-- ===== lectura y reparación de DXF ===== -->
-<script src="js/dxf/parser.js?v=20261017e"></script>
-<script src="js/dxf/repair.js?v=20261017e"></script>
+<script src="js/dxf/parser.js?v=20261018b"></script>
+<script src="js/dxf/repair.js?v=20261018b"></script>
 
 <!-- ===== motor de nesting ===== -->
-<script src="js/nesting/orientation.js?v=20261017e"></script>
-<script src="js/nesting/placement.js?v=20261017e"></script>
-<script src="js/nesting/scoring.js?v=20261017e"></script>
-<script src="js/nesting/optimization.js?v=20261017e"></script>
+<script src="js/nesting/orientation.js?v=20261018b"></script>
+<script src="js/nesting/placement.js?v=20261018b"></script>
+<script src="js/nesting/scoring.js?v=20261018b"></script>
+<script src="js/nesting/optimization.js?v=20261018b"></script>
 
 <!-- ===== puente al Web Worker real (Bloque 3) ===== -->
-<script src="js/nesting/worker-bridge.js?v=20261017e"></script>
+<script src="js/nesting/worker-bridge.js?v=20261018b"></script>
 
 <!-- ===== tiras de relleno automáticas ===== -->
-<script src="js/strips/strips.js?v=20261017e"></script>
+<script src="js/strips/strips.js?v=20261018b"></script>
 
 <!-- ===== interfaz ===== -->
-<script src="js/ui/html.js?v=20261017e"></script>
-<script src="js/ui/areas.js?v=20261017e"></script>
-<script src="js/ui/pieces.js?v=20261017e"></script>
-<script src="js/ui/render.js?v=20261017e"></script>
-<script src="js/ui/history.js?v=20261017e"></script>
-<script src="js/ui/repair.js?v=20261017e"></script>
+<script src="js/ui/html.js?v=20261018b"></script>
+<script src="js/ui/areas.js?v=20261018b"></script>
+<script src="js/ui/pieces.js?v=20261018b"></script>
+<script src="js/ui/render.js?v=20261018b"></script>
+<script src="js/ui/history.js?v=20261018b"></script>
+<script src="js/ui/repair.js?v=20261018b"></script>
 
 <!-- ===== orquestación del motor (une UI + nesting) ===== -->
-<script src="js/nesting/engine.js?v=20261017e"></script>
+<script src="js/nesting/engine.js?v=20261018b"></script>
 
 <!-- ===== exportación ===== -->
-<script src="js/export/dxf.js?v=20261017e"></script>
-<script src="js/export/zip.js?v=20261017e"></script>
-<script src="js/export/pdf.js?v=20261017e"></script>
-<script src="js/export/stickers.js?v=20261017e"></script>
+<script src="js/export/dxf.js?v=20261018b"></script>
+<script src="js/export/zip.js?v=20261018b"></script>
+<script src="js/export/pdf.js?v=20261018b"></script>
+<script src="js/export/stickers.js?v=20261018b"></script>
 
 <!-- ===== arranque de la app (áreas, pestañas, sesión) ===== -->
-<script src="js/ui/orders.js?v=20261017e"></script>
-<script src="js/ui/inventario.js?v=20261017e"></script>
-<script src="js/ui/tiempo-real.js?v=20261017e"></script>
-<script src="js/ui/auth.js?v=20261017e"></script>
-<script src="js/app.js?v=20261017e"></script>
+<script src="js/ui/orders.js?v=20261018b"></script>
+<script src="js/ui/inventario.js?v=20261018b"></script>
+<script src="js/ui/tiempo-real.js?v=20261018b"></script>
+<script src="js/ui/auth.js?v=20261018b"></script>
+<script src="js/ui/usuarios.js?v=20261018b"></script>
+<script src="js/app.js?v=20261018b"></script>
 
 <!-- Aviso de seguridad: si el CSS o el JS no llegaron a cargar (por ej.
      si abriste este archivo haciendo doble clic ADENTRO de un .zip sin

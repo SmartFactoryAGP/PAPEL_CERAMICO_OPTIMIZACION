@@ -553,10 +553,6 @@ td.name{ max-width:120px; overflow:hidden; text-overflow:ellipsis; white-space:n
 .selResumen{ font-size:12px; color:var(--ink2); padding:8px 10px; border-radius:9px; background:var(--bg2); border:1px solid var(--line-soft) }
 .selResumen b{ font-family:var(--font-mono) }
 .invTable{ user-select:none }
-.cartDelta{ display:block; font:800 10px var(--font-mono); line-height:1.1 }
-.cartDelta.sale{ color:var(--warn) }
-.cartDelta.entra{ color:var(--good) }
-.invCell.sel .cartDelta{ color:#fff }
 .invEncCol, .invEncFila{ cursor:pointer }
 .invTable thead th.invEncCol:hover, .invTable tbody th.invEncFila:hover{ background:var(--area-soft) !important; color:var(--area-ink) }
 .msg-error ul{ margin:6px 0 0; padding-left:18px; font-weight:500 }
@@ -597,7 +593,6 @@ td.name{ max-width:120px; overflow:hidden; text-overflow:ellipsis; white-space:n
 .invCell{ font:600 13px var(--font-mono); color:var(--muted2) !important; cursor:pointer; transition:background var(--t-fast) }
 .invCell.conStock{ color:var(--ink) !important; font-weight:800; background:var(--area-soft) }
 .invCell:hover{ background:var(--bg2) !important; box-shadow:0 0 0 1px var(--line-strong) inset }
-.invCell.sel{ background:var(--area) !important; color:#fff !important; box-shadow:none }
 .invNa{ color:var(--line-strong) !important }
 .invTot{ font:800 13px var(--font-mono); color:var(--ink) !important }
 .invTable tfoot td, .invTable tfoot th{ position:sticky; bottom:0; background:var(--bg2); font:800 12.5px var(--font-mono); color:var(--ink); border-top:1px solid var(--line) }
@@ -710,3 +705,49 @@ td.name{ max-width:120px; overflow:hidden; text-overflow:ellipsis; white-space:n
 /* stock de un material que no está en la lista (se muestra para que no quede oculto) */
 .invTable .invHuerfano{ background:var(--warn-soft) !important; color:var(--warn) !important; font-weight:800 }
 .invTable thead th.invHuerfano small{ color:var(--warn) }
+
+/* ---------- administración de usuarios ---------- */
+.rolTag{ display:inline-block; margin-left:6px; padding:1px 7px; border-radius:999px; font:800 9.5px var(--font-ui); font-style:normal; text-transform:uppercase; letter-spacing:.06em; background:var(--primary-soft); color:var(--primary-700) }
+.rolTag.off{ background:var(--warn-soft); color:var(--warn) }
+.rolTag.onDark{ background:rgba(255,255,255,.14); color:#fff; margin-left:0 }
+.tabAdmin{ margin-left:8px; border-left:1px solid var(--line-soft) !important }
+.usrLista{ display:flex; flex-direction:column; gap:6px; overflow-y:auto; min-height:0 }
+.usrItem{ justify-content:flex-start; gap:10px; text-align:left; padding:9px 10px; background:#fff; border:1px solid var(--line-soft); color:var(--ink); box-shadow:none; border-radius:11px }
+.usrItem:hover{ background:var(--bg2); border-color:var(--line-strong); box-shadow:none }
+.usrItem.activo{ border-color:var(--primary); box-shadow:0 0 0 1px var(--primary) inset; background:var(--primary-soft) }
+.usrItem.inactivo{ opacity:.6 }
+.usrItemTxt{ display:flex; flex-direction:column; min-width:0 }
+.usrItemTxt b{ font-size:13px }
+.usrItemTxt small{ font-size:11px; color:var(--muted); font-weight:500; line-height:1.4 }
+.avatar.sm{ width:28px; height:28px; font-size:10.5px; flex:none }
+.usrForm{ display:flex; flex-direction:column; gap:14px; max-width:860px }
+.claveRow{ display:flex; gap:6px; align-items:center }
+.claveRow input{ flex:1 }
+.usrToggles{ display:flex; flex-direction:column; gap:2px }
+.usrToggles .hint{ display:inline; margin:0 }
+.permTable th, .permTable td{ text-align:center }
+.permTable tbody th{ text-align:left; font-weight:700; color:var(--ink); white-space:nowrap }
+.permChk{ display:inline-flex; padding:6px; cursor:pointer }
+.permChk input{ width:18px; height:18px; accent-color:var(--primary); cursor:pointer }
+.usrAcciones{ display:flex; align-items:center; gap:10px; flex-wrap:wrap }
+.usrAcciones .hint{ margin:0 }
+
+/* ---------- tabla de existencias: lectura sin ambigüedad ----------
+   - número grande: stock real ahora
+   - etiqueta abajo: lo pendiente en el carrito y cómo quedaría ("sale 4 → 7")
+   - elegida: borde grueso del color del área + fondo suave, SIN tapar el
+     estado del stock (antes se pintaba todo de verde y no se distinguía) */
+.invCell b{ display:block; font:800 15px var(--font-mono); line-height:1.15 }
+.invCell:not(.conStock) b{ font-weight:600; color:var(--muted2) }
+.cartDelta{ display:inline-block; margin-top:3px; padding:1px 6px; border-radius:6px; font:700 10.5px var(--font-ui); white-space:nowrap }
+.cartDelta.sale{ background:var(--warn-soft); color:var(--warn); border:1px solid rgba(201,56,58,.25) }
+.cartDelta.entra{ background:var(--good-soft); color:var(--good); border:1px solid rgba(19,135,74,.25) }
+.invCell.sel{ box-shadow:inset 0 0 0 2.5px var(--area) !important; background:color-mix(in srgb, var(--area) 16%, #fff) !important }
+.invLeyenda{ display:flex; flex-wrap:wrap; align-items:center; gap:6px 18px; font-size:11.5px; color:var(--muted); margin-top:-4px }
+.invLeyenda span{ display:inline-flex; align-items:center; gap:6px }
+.lgNum{ font:800 13px var(--font-mono); color:var(--ink); background:var(--area-soft); padding:1px 7px; border-radius:6px }
+.lgPend{ font:700 10.5px var(--font-ui); padding:1px 6px; border-radius:6px }
+.lgPend.entra{ background:var(--good-soft); color:var(--good) }
+.lgPend.sale{ background:var(--warn-soft); color:var(--warn) }
+.lgSel{ width:18px; height:14px; border-radius:4px; box-shadow:inset 0 0 0 2.5px var(--area); background:color-mix(in srgb, var(--area) 16%, #fff) }
+.lgNa{ color:var(--line-strong); font-weight:700 }

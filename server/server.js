@@ -5,23 +5,34 @@
    no puede hablar con SQL Server directamente — ningún navegador puede.
    Este es un servicio chico que SÍ tiene el driver de SQL Server, corre
    en tu misma PC, y le da a la app 3 direcciones simples para pedirle
-   datos con fetch() normal:
+   datos con fetch() normal. TODO pide sesión salvo login y salud, y cada
+   endpoint verifica el permiso del usuario (área + vista) — entre
+   corchetes, la vista que hace falta:
 
-     GET  /api/ordenes-pendientes        -> lista de órdenes por cortar (requiere sesión)
-     GET  /api/ordenes-pendientes/:orden -> busca UNA orden puntual por número, sin el filtro de Puestodetrabajo (para "Ingreso rápido" — requiere sesión)
-     GET  /api/lote/:codigo              -> todas las órdenes 0132 de un Código_Lote (DF_SAGA_LotesVidro), sin el filtro de Puestodetrabajo, sin duplicados (requiere sesión)
-     GET  /api/dxf?orden=...&archivo=...  -> el contenido del DXF de una orden (requiere sesión)
-     GET  /api/rack-simulado              -> Rack simulado COMPARTIDO (archivo local, no SQL) — SIN login, abierto para cualquiera
-     POST /api/rack-simulado/agregar      -> agrega una orden al rack simulado compartido (requiere sesión)
-     POST /api/rack-simulado/:orden/salida -> saca una orden del rack simulado compartido — SIN login
-     GET  /api/rack-simulado/:orden/ultima-salida -> última vez que ESA orden salió del rack (para reentradas) — SIN login
-     POST /api/rack-simulado/reentrada    -> reingresa una orden al rack simulado, EN LA MISMA POSICIÓN que tenía — SIN login
-     POST /api/ordenes/:orden/marcar-en-stock  -> marca una orden como cortada (en SQL — requiere sesión, y bloqueado salvo PERMITIR_ESCRITURA_SQL=true)
-     GET  /api/rack-actual                -> órdenes que están ahora en el rack (en SQL) — SIN login
-     POST /api/rack/:orden/salida         -> le da salida a una orden (en SQL — requiere sesión, y bloqueado salvo PERMITIR_ESCRITURA_SQL=true)
-     POST /api/login                      -> inicia sesión (usuario/clave de AUTH_USUARIOS)
-     POST /api/logout                     -> cierra sesión
-     GET  /api/rack-resumen-dia           -> cuántas entraron/salieron del rack hoy (requiere sesión)
+     GET  /api/ordenes-pendientes        -> lista de órdenes por cortar [ordenes]
+     GET  /api/ordenes-pendientes/:orden -> UNA orden por número, sin el filtro de Puestodetrabajo [ordenes]
+     GET  /api/lote/:codigo              -> todas las órdenes 0132 de un Código_Lote [ordenes]
+     GET  /api/dxf?orden=...&archivo=...  -> el contenido del DXF de una orden [ordenes]
+     GET  /api/rack-simulado              -> rack de casillas compartido (archivo local, no SQL) [rack u ordenes]
+     POST /api/rack-simulado/agregar      -> agrega una orden al rack [ordenes]
+     POST /api/rack-simulado/:orden/salida -> saca una orden del rack [rack]
+     GET  /api/rack-simulado/:orden/ultima-salida -> última salida de ESA orden (para reentradas) [rack]
+     POST /api/rack-simulado/reentrada    -> reingresa una orden EN LA MISMA POSICIÓN que tenía [rack]
+     GET  /api/inventario                 -> stock de Tecoflex por material y medida [rack]
+     POST /api/inventario/movimientos     -> entradas / salidas de stock, en lote [rack]
+     GET  /api/eventos                    -> avisos en vivo (Server-Sent Events) [sesión]
+     GET  /api/rack-resumen-dia           -> cuántas entraron/salieron del rack hoy [ordenes o rack]
+     POST /api/imprimir-zpl               -> manda stickers a la Zebra [ordenes o rack]
+     POST /api/ordenes/:orden/marcar-en-stock  -> marca una orden como cortada en SQL [ordenes; bloqueado salvo PERMITIR_ESCRITURA_SQL=true]
+     GET  /api/rack-actual                -> órdenes en el rack (en SQL) [rack u ordenes]
+     POST /api/rack/:orden/salida         -> salida en SQL [rack; bloqueado salvo PERMITIR_ESCRITURA_SQL=true]
+     POST /api/login, /api/logout, GET /api/sesion -> sesión (ver server/usuarios.js)
+     GET/POST/PUT/DELETE /api/usuarios    -> administración de usuarios [solo administradores]
+     GET  /api/salud                      -> ¿está vivo? (sin sesión)
+
+   Módulos: usuarios.js (cuentas y sesiones), datos.js (dónde vive cada
+   archivo), racks.js y inventario.js (almacenamiento de cada rack — lo que
+   se reemplaza el día que pasen a SQL), en-vivo.js (avisos en vivo).
 
    Cómo arrancarlo:
      1) copiá ".env.example" a ".env" y completá tus datos reales
@@ -64,13 +75,25 @@ try {
    posiciones y materiales que se validan acá nunca difieren de los que
    se muestran en pantalla. */
 const AREAS_CONFIG = require(path.join(__dirname, '..', 'js', 'core', 'areas-config.js'));
+// datos en server/datos/, una carpeta por rack (ver server/datos.js);
+// la primera vez mueve ahí lo que estaba suelto en server/
+const datos = require('./datos');
+datos.migrar(Object.keys(AREAS_CONFIG.areas));
+const { errorHttp, esHoy } = require('./comun');
+const usuarios = require('./usuarios');
+usuarios.iniciar(AREAS_CONFIG, process.env.AUTH_USUARIOS, datos.rutas.usuarios());
+const enVivo = require('./en-vivo').crear(usuarios);
+const notificar = enVivo.notificar;
+const racksMod = require('./racks');
+const racks = racksMod.crear({ datos, notificar });
+const inventario = require('./inventario').crear({ datos, notificar });
 /* Área del pedido: la app la manda en la cabecera x-area (ver
    ordApiHeaders en orders.js). Sin cabecera = papel cerámico, para que
    todo lo que ya existía siga funcionando igual. */
 function areaDe(req){
   const id = String(req.get('x-area') || req.query.area || AREAS_CONFIG.porDefecto).trim().toLowerCase();
   const area = AREAS_CONFIG.areas[id];
-  if(!area){ const e = new Error(`área de trabajo desconocida: "${id}"`); e.status = 400; throw e; }
+  if(!area) throw errorHttp(`área de trabajo desconocida: "${id.slice(0, 40)}"`);
   return area;
 }
 /* Consulta SQL propia de un área (Tecoflex y Mallas viven en OTRAS
@@ -78,21 +101,46 @@ function areaDe(req){
    cargada, se contesta 501 con un mensaje claro en vez de fallar raro. */
 function consultaDeArea(area, nombre){
   const q = queries.areas && queries.areas[area.id] && queries.areas[area.id][nombre];
-  if(!q){
-    const e = new Error(`La consulta de ${area.nombre} todavía no está configurada (server/queries.js → areas.${area.id}.${nombre}).`);
-    e.status = 501; e.pendiente = true;
-    throw e;
-  }
+  if(!q) throw errorHttp(`La consulta de ${area.nombre} todavía no está configurada (server/queries.js → areas.${area.id}.${nombre}).`, 501, { pendiente: true });
   return q;
 }
-/* Respuesta de error estándar de los endpoints: usa el código que traiga
-   el error (400 área desconocida, 501 consulta pendiente) o 500. */
+/* Respuesta de error estándar de los endpoints. Los errores PREVISTOS
+   (con código: 400 área desconocida, 501 consulta pendiente, etc.) se
+   contestan tal cual. Los IMPREVISTOS (el driver de SQL, el disco, la
+   impresora) traen detalles internos: nombre del servidor, usuario de la
+   base, rutas de la PC. Esos solo se le muestran a un administrador; al
+   resto le llega un aviso genérico, y el detalle completo queda siempre en
+   la ventana del puente. */
+function mensajeDeError(err, req){
+  if(err.status && err.status < 500) return err.message;
+  if(err.status === 501 || err.status === 503) return err.message;
+  if(req && req.usuarioObj && req.usuarioObj.admin) return err.message;
+  return 'Error interno del puente. El detalle quedó registrado en la ventana del puente; si se repite, avisale al administrador.';
+}
 function responderError(res, etiqueta, err){
   console.error(`[${etiqueta}]`, err.message);
-  res.status(err.status || 500).json({ error: err.message, pendiente: !!err.pendiente });
+  res.status(err.status || 500).json({ error: mensajeDeError(err, res.req), pendiente: !!err.pendiente });
 }
 
 const app = express();
+app.disable('x-powered-by'); // no anunciar qué servidor es (pista gratis para un atacante)
+
+/* Cabeceras de seguridad en todas las respuestas:
+   - nosniff: el navegador no "adivina" el tipo de un archivo (un JSON nunca
+     se ejecuta como script).
+   - frame-ancestors / X-Frame-Options: ninguna otra página puede meter la
+     app adentro de un marco invisible para hacerle tocar botones al
+     usuario sin que se dé cuenta (clickjacking).
+   - Referrer-Policy: las direcciones internas no se filtran a otros sitios.
+   - object-src / base-uri: cierran dos vías clásicas de inyección. */
+app.use((req, res, next)=>{
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  res.setHeader('Content-Security-Policy', "frame-ancestors 'none'; object-src 'none'; base-uri 'self'");
+  if(req.path.startsWith('/api/')) res.setHeader('Cache-Control', 'no-store'); // datos y sesiones: nunca al caché del disco
+  next();
+});
 
 const PORT = process.env.PORT || 4000;
 
@@ -132,7 +180,7 @@ const ORIGENES_LAN = new Set(direccionesDeRed().map(ip=>`http://${ip}:${PORT}`))
 app.use(cors({
   origin: (origin, cb)=>{
     if(!origin || origin==='null' || /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin) || ORIGENES_LAN.has(origin)) return cb(null, true);
-    cb(new Error('origen no permitido'));
+    cb(errorHttp('origen no permitido', 403));
   }
 }));
 app.use(express.json());
@@ -211,67 +259,92 @@ app.use((req, res, next)=>{
   next();
 });
 
-/* ============ Usuarios (Programador 1/2/3, etc.) ============
-   Quién puede entrar a Lista de corte, Nesting y Editor de archivos —
-   el Rack queda siempre abierto, sin pedir nada, para cualquiera.
-
-   Los usuarios y contraseñas se completan en tu .env, como
-   "Nombre:clave" separados por coma — ver AUTH_USUARIOS en
-   .env.example. Nunca se guardan en ningún archivo de este código,
-   solo en tu .env (que vos controlás).
-
-   Las sesiones son simples: al iniciar sesión se genera un token al
-   azar, se guarda en la MEMORIA de este proceso (no en un archivo ni
-   en SQL), y listo — la app lo manda en cada pedido después. Si
-   reiniciás el puente (cerrás y volvés a abrir "iniciar"), todos
-   tienen que volver a iniciar sesión — es la forma más simple de que
-   nunca quede una sesión "colgada" para siempre. */
-function usuariosPermitidos(){
-  const raw = process.env.AUTH_USUARIOS || '';
-  const mapa = new Map();
-  raw.split(',').forEach(par=>{
-    const i = par.lastIndexOf(':');
-    if(i<0) return;
-    const usuario = par.slice(0,i).trim();
-    const clave = par.slice(i+1).trim();
-    if(usuario && clave) mapa.set(usuario, clave);
-  });
-  return mapa;
+/* ============ Usuarios, sesiones y permisos ============
+   Ver server/usuarios.js. Toda la app pide sesión (nadie entra sin
+   usuario, ni siquiera a mirar el Rack), y cada endpoint verifica el
+   permiso del usuario para ESA vista en ESA área — no alcanza con que
+   la pestaña esté escondida en la pantalla. */
+/* Freno de intentos por IP: después de 8 fallidos en 10 min, se frena el
+   login un rato. La contraseña ahora se verifica en otro hilo (asíncrona),
+   así que los pedidos de una MISMA IP se atienden en fila, de a uno: si
+   no, mandando 100 a la vez se probaban todos antes de que el primero
+   llegara a contar como fallido. Las demás IPs no esperan, y 30 personas
+   entrando juntas desde una misma IP solo esperan unos milisegundos. */
+const LOGIN_VENTANA_MS = 10*60*1000, LOGIN_MAX_FALLIDOS = 8;
+const intentosLogin = new Map(); // ip -> {n, desde}
+const filaLogin = new Map();     // ip -> promesa del último login en curso
+setInterval(()=>{ // sin esto, cada IP que alguna vez falló quedaba en memoria para siempre
+  const ahora = Date.now();
+  intentosLogin.forEach((r, ip)=>{ if(ahora - r.desde > LOGIN_VENTANA_MS) intentosLogin.delete(ip); });
+}, LOGIN_VENTANA_MS).unref();
+async function intentarLogin(ip, usuario, clave){
+  const ahora = Date.now();
+  const reg = intentosLogin.get(ip) || {n:0, desde:ahora};
+  if(ahora - reg.desde > LOGIN_VENTANA_MS){ reg.n = 0; reg.desde = ahora; }
+  if(reg.n >= LOGIN_MAX_FALLIDOS) return { status: 429, cuerpo: { error: 'Demasiados intentos fallidos. Esperá unos minutos y volvé a probar.' } };
+  const s = (typeof usuario==='string' && typeof clave==='string' && usuario && clave && clave.length <= 200)
+    ? await usuarios.login(usuario, clave) : null;
+  if(!s){ reg.n++; intentosLogin.set(ip, reg); return { status: 401, cuerpo: { error: 'usuario o contraseña incorrectos' } }; }
+  intentosLogin.delete(ip);
+  return { status: 200, cuerpo: { ok: true, ...s } };
 }
-
-const sesiones = new Map(); // token -> { usuario, creado }
-
-app.post('/api/login', (req, res) => {
+app.post('/api/login', async (req, res) => {
+  const ip = req.ip;
   const { usuario, clave } = req.body || {};
-  const usuarios = usuariosPermitidos();
-  if(!usuarios.size){
-    return res.status(501).json({ error: 'AUTH_USUARIOS no está configurado en el .env del puente todavía.' });
-  }
-  const claveEsperada = usuario ? usuarios.get(String(usuario).trim()) : undefined;
-  if(!usuario || !clave || claveEsperada===undefined || !secretoIgual(clave, claveEsperada)){
-    return res.status(401).json({ error: 'usuario o contraseña incorrectos' });
-  }
-  const token = crypto.randomBytes(24).toString('hex');
-  sesiones.set(token, { usuario: String(usuario).trim(), creado: new Date() });
-  res.json({ ok: true, token, usuario: String(usuario).trim() });
+  const turno = (filaLogin.get(ip) || Promise.resolve()).then(()=>intentarLogin(ip, usuario, clave));
+  const fin = turno.catch(()=>{});
+  filaLogin.set(ip, fin);
+  fin.then(()=>{ if(filaLogin.get(ip)===fin) filaLogin.delete(ip); });
+  try {
+    const r = await turno;
+    res.status(r.status).json(r.cuerpo);
+  } catch(err){ responderError(res, 'login', err); }
 });
-
 app.post('/api/logout', (req, res) => {
-  const token = req.get('x-auth-token');
-  sesiones.delete(token);
+  usuarios.logout(req.get('x-auth-token'));
+  enVivo.revisarSesiones(); // su conexión en vivo se corta ya
   res.json({ ok: true });
 });
 
-/* Exige una sesión válida (header x-auth-token) — se aplica solo a los
-   endpoints de Lista de corte que tocan SQL/DXF; el Rack (ver más
-   abajo) queda siempre afuera de esto a propósito. */
+/* Sesión válida (cabecera x-auth-token; la conexión en vivo, que no puede
+   mandar cabeceras, lo manda como ?auth=). Deja el usuario en req. */
 function exigirLogin(req, res, next){
-  const token = req.get('x-auth-token');
-  const sesion = token && sesiones.get(token);
-  if(!sesion) return res.status(401).json({ error: 'iniciá sesión para usar Lista de corte' });
-  req.usuario = sesion.usuario;
+  const u = usuarios.deSesion(req.get('x-auth-token') || (req.path==='/api/eventos' ? req.query.auth : undefined));
+  if(!u) return res.status(401).json({ error: 'Tu sesión venció o no iniciaste sesión. Volvé a ingresar.', sesion: false });
+  req.usuarioObj = u;
+  req.usuario = u.usuario;
   next();
 }
+/* Sesión + permiso para alguna de esas vistas en el área del pedido. */
+function exigirPermiso(...vistas){
+  return (req, res, next)=>exigirLogin(req, res, ()=>{
+    let area;
+    try { area = areaDe(req); } catch(e){ return res.status(e.status||400).json({ error: e.message }); }
+    if(vistas.some(v=>usuarios.puede(req.usuarioObj, area.id, v))) return next();
+    res.status(403).json({ error: `Tu usuario no tiene permiso para esto en ${area.nombre}. Pedíselo al administrador.` });
+  });
+}
+function exigirAdmin(req, res, next){
+  exigirLogin(req, res, ()=>{
+    if(req.usuarioObj.admin) return next();
+    res.status(403).json({ error: 'Solo un administrador puede hacer esto.' });
+  });
+}
+
+// quién soy y qué puedo ver (la app lo pide al abrir, por si cambiaron mis permisos)
+app.get('/api/sesion', exigirLogin, (req, res) => res.json(usuarios.publico(req.usuarioObj)));
+
+/* ---- administración de usuarios (solo administradores) ---- */
+// después de cada cambio, las conexiones en vivo de quien quedó desactivado
+// o borrado se cortan (sus pedidos normales ya se rechazaban)
+const responderAdmin = (res, fn) => {
+  try { res.json(fn()); enVivo.revisarSesiones(); }
+  catch(e){ responderError(res, 'usuarios', e); }
+};
+app.get('/api/usuarios', exigirAdmin, (req, res) => responderAdmin(res, ()=>usuarios.listar()));
+app.post('/api/usuarios', exigirAdmin, (req, res) => responderAdmin(res, ()=>usuarios.crear(req.body||{}, req.usuario)));
+app.put('/api/usuarios/:usuario', exigirAdmin, (req, res) => responderAdmin(res, ()=>usuarios.modificar(req.params.usuario, req.body||{}, req.usuario)));
+app.delete('/api/usuarios/:usuario', exigirAdmin, (req, res) => responderAdmin(res, ()=>{ usuarios.eliminar(req.params.usuario, req.usuario); return {ok:true}; }));
 
 /* El driver de SQL Server (mssql) trae por default 15 segundos de
    límite tanto para CONECTAR como para que una consulta termine — si
@@ -287,6 +360,12 @@ function exigirLogin(req, res, next){
    DB_CONNECTION_TIMEOUT_MS en tu .env. */
 const DB_REQUEST_TIMEOUT_MS = parseInt(process.env.DB_REQUEST_TIMEOUT_MS || '60000', 10);
 const DB_CONNECTION_TIMEOUT_MS = parseInt(process.env.DB_CONNECTION_TIMEOUT_MS || '30000', 10);
+/* Aceptar el certificado del SQL Server sin verificarlo: hace falta con
+   los servidores internos que usan un certificado propio (el caso normal),
+   pero deja la puerta abierta a que alguien en la red se haga pasar por el
+   servidor. Si sistemas instala un certificado válido, poner
+   DB_TRUST_SERVER_CERTIFICATE=false en el .env lo exige. */
+const CONFIAR_CERTIFICADO = String(process.env.DB_TRUST_SERVER_CERTIFICATE || 'true').toLowerCase() !== 'false';
 
 const dbConfig = {
   server: process.env.DB_SERVER,
@@ -295,7 +374,7 @@ const dbConfig = {
   requestTimeout: DB_REQUEST_TIMEOUT_MS,
   connectionTimeout: DB_CONNECTION_TIMEOUT_MS,
   options: {
-    trustServerCertificate: true,
+    trustServerCertificate: CONFIAR_CERTIFICADO,
     // autenticación de Windows si no hay usuario/contraseña cargados
     trustedConnection: String(process.env.DB_TRUSTED_CONNECTION).toLowerCase() === 'true'
   }
@@ -340,7 +419,7 @@ const dbConfigCalendario = process.env.CAL_DB_SERVER ? {
   requestTimeout: DB_REQUEST_TIMEOUT_MS,
   connectionTimeout: DB_CONNECTION_TIMEOUT_MS,
   options: {
-    trustServerCertificate: true,
+    trustServerCertificate: CONFIAR_CERTIFICADO,
     trustedConnection: String(process.env.CAL_DB_TRUSTED_CONNECTION).toLowerCase() === 'true'
   }
 } : null;
@@ -513,7 +592,7 @@ function consultaCompartida(clave, ttlMs, fn){
   return entrada.promesa;
 }
 
-app.get('/api/ordenes-pendientes', exigirLogin, async (req, res) => {
+app.get('/api/ordenes-pendientes', exigirPermiso('ordenes'), async (req, res) => {
   try {
     const area = areaDe(req);
     const filas = await consultaCompartida('pendientes:'+area.id, CACHE_PENDIENTES_MS, ()=>area.id==='papel' ? pendientesPapel() : pendientesDeArea(area));
@@ -559,7 +638,7 @@ async function pendientesPapel(){
    Devuelve encontrada:false si no existe ninguna orden con ese número
    y esa operación, en vez de un error — es un resultado normal, no
    una falla. */
-app.get('/api/ordenes-pendientes/:orden', exigirLogin, async (req, res) => {
+app.get('/api/ordenes-pendientes/:orden', exigirPermiso('ordenes'), async (req, res) => {
   try {
     const area = areaDe(req);
     const esPapel = area.id === 'papel';
@@ -590,7 +669,7 @@ app.get('/api/ordenes-pendientes/:orden', exigirLogin, async (req, res) => {
    DENTRO de este lote; si la app pide dos códigos de lote distintos que
    comparten una orden, el dedupe entre ellos lo hace el frontend
    (orders.js), no esta ruta. */
-app.get('/api/lote/:codigo', exigirLogin, async (req, res) => {
+app.get('/api/lote/:codigo', exigirPermiso('ordenes'), async (req, res) => {
   try {
     const area = areaDe(req);
     const esPapel = area.id === 'papel';
@@ -610,212 +689,77 @@ app.get('/api/lote/:codigo', exigirLogin, async (req, res) => {
   }
 });
 
-/* ============ Rack simulado, COMPARTIDO entre todas las PC ============
-   Vive en un archivo chico de ESTA PC (la que corre el puente) — no en
-   SQL, no en cada navegador por separado. Todas las computadoras que
-   le pegan a este mismo puente ven exactamente el mismo Rack, lo
-   actualicen desde donde lo actualicen. Nunca toca SQL para nada — es
-   solo un archivo de texto plano en esta misma carpeta del servidor. */
-/* Un archivo de rack POR ÁREA. Papel cerámico conserva el nombre de
-   siempre (rack-simulado.json) para que lo que ya estaba guardado siga
-   ahí sin migrar nada. */
-const RACK_ARCHIVOS = { papel: 'rack-simulado.json', tecoflex: 'rack-tecoflex.json', mallas: 'rack-mallas.json' };
-function rackPath(area){ return path.join(__dirname, RACK_ARCHIVOS[area.id]); }
+/* ============ Racks de casillas, COMPARTIDOS entre todas las PC ============
+   Viven en archivos de ESTA PC (la que corre el puente), no en SQL ni en
+   cada navegador: todas las computadoras ven exactamente el mismo rack.
+   El almacenamiento está en server/racks.js; acá solo los endpoints. */
+const conArea = (fn, soloCasillas = true) => (req, res) => {
+  let area;
+  try { area = areaDe(req); if(soloCasillas) racksMod.exigirCasillas(area); }
+  catch(e){ return responderError(res, req.path, e); }
+  try { fn(req, res, area); } catch(e){ responderError(res, req.path, e); }
+};
 
-/* Lee una lista guardada en un JSON de esta carpeta. Si el archivo
-   todavía no existe (primera vez) o está vacío, devuelve [] como
-   siempre — pero si EXISTE con contenido y no se puede parsear, TIRA
-   ERROR en vez de devolver []. Antes, un archivo a medio escribir (corte
-   de luz, antivirus bloqueándolo) se leía como "rack vacío", y la
-   siguiente orden que entraba al rack lo pisaba con esa lista vacía + 1:
-   se perdía el rack entero (o el historial entero) sin ningún aviso. */
-/* Caché en memoria de cada archivo, validada por fecha de modificación +
-   tamaño: el Rack de cada PC pide /api/rack-simulado cada 6 s, y antes
-   cada pedido releía y parseaba el archivo del disco (y el resumen del
-   día, el historial ENTERO, que solo crece). Ahora solo se hace un stat
-   (barato); si el archivo no cambió, se usa lo ya parseado. Si alguien lo
-   edita a mano, cambia la fecha/tamaño y se vuelve a leer solo.
-   Se devuelve siempre una COPIA del arreglo: los endpoints hacen push/
-   filter sobre lo que leen, y eso no puede ensuciar la caché si después
-   la escritura falla. */
-const cacheListas = new Map(); // ruta -> {mtimeMs, size, lista}
-function leerListaJson(ruta){
-  let st;
-  try { st = fs.statSync(ruta); }
-  catch(e){ if(e.code==='ENOENT'){ cacheListas.delete(ruta); return []; } throw e; }
-  const c = cacheListas.get(ruta);
-  if(c && c.mtimeMs===st.mtimeMs && c.size===st.size) return c.lista.slice();
-  const texto = fs.readFileSync(ruta, 'utf8');
-  let lista;
-  if(!texto.trim()) lista = [];
-  else {
-    try { lista = JSON.parse(texto); }
-    catch(e){ throw new Error(`${path.basename(ruta)} está dañado (no es JSON válido) — no se toca para no perder datos; revisalo o restauralo a mano`); }
-  }
-  cacheListas.set(ruta, {mtimeMs: st.mtimeMs, size: st.size, lista});
-  return lista.slice();
-}
-/* Escritura atómica: se escribe a un temporal al lado y se renombra
-   encima (en el mismo disco, el renombre es atómico) — el archivo queda
-   con el contenido viejo entero o con el nuevo entero, nunca a medias.
-   Si Windows no deja renombrar (por ej. el antivirus tiene el archivo
-   abierto en ese instante), se escribe directo como antes. */
-function escribirListaJson(ruta, lista){
-  const texto = JSON.stringify(lista, null, 2);
-  const tmp = ruta + '.tmp';
-  try {
-    fs.writeFileSync(tmp, texto, 'utf8');
-    fs.renameSync(tmp, ruta);
-  } catch(e){
-    try { fs.unlinkSync(tmp); } catch(_){ /* puede no existir */ }
-    fs.writeFileSync(ruta, texto, 'utf8');
-  }
-  // lo que se acaba de escribir queda como caché (sin volver a parsearlo)
-  try {
-    const st = fs.statSync(ruta);
-    cacheListas.set(ruta, {mtimeMs: st.mtimeMs, size: st.size, lista: lista.slice()});
-  } catch(_){ cacheListas.delete(ruta); }
-}
+app.get('/api/rack-simulado', exigirPermiso('rack','ordenes'), conArea((req, res, area) => {
+  res.json(racks.leer(area));
+}));
 
-function leerRackSimulado(area){ return leerListaJson(rackPath(area)); }
-function guardarRackSimulado(area, lista){
-  escribirListaJson(rackPath(area), lista);
-  notificar({ tipo:'rack', area: area.id }); // las demás PCs refrescan su Rack al instante
-}
-/* Rack de casillas (papel cerámico, mallas): la próxima casilla libre,
-   A1, A2 ... G20 — una orden por casilla. */
-function proximaUbicacionLibre(area, lista){
-  const ocupadas = new Set(lista.map(o=>o.ubicacion));
-  for(const letra of area.rack.letras){
-    for(let n=1; n<=area.rack.porLetra; n++){
-      const loc = letra+n;
-      if(!ocupadas.has(loc)) return loc;
-    }
-  }
-  return null; // todas las casillas están ocupadas — no debería pasar en la práctica
-}
-function capacidadRack(area){ return area.rack.letras.length * area.rack.porLetra; }
-/* Los endpoints de rack por órdenes (/api/rack-simulado*) son solo para
-   racks de casillas; Tecoflex usa el inventario (/api/inventario). */
-function exigirRackCasillas(area){
-  if(area.rack.tipo !== 'casillas'){
-    const e = new Error(`El rack de ${area.nombre} es un inventario por material y medida, no por órdenes (usá /api/inventario).`);
-    e.status = 400; throw e;
-  }
-}
-
-/* Registro chico de "entró al rack" / "salió del rack" — separado del
-   estado ACTUAL del rack (que se borra al sacar algo), para poder
-   armar el resumen del día aunque ya se haya sacado. Vive en su propio
-   archivo, en la misma carpeta, y solo crece (nunca se reescriben
-   filas viejas, solo se agrega una nueva al final). */
-const RACK_HISTORIAL_PATH = path.join(__dirname, 'rack-historial.json');
-function leerHistorial(){ return leerListaJson(RACK_HISTORIAL_PATH); }
-/* El rack (rack-simulado.json) es lo que manda: si el historial no se
-   puede leer, se avisa en consola y se saltea ESTE registro — sin pisar
-   el archivo dañado (se puede recuperar a mano) y sin hacer fallar la
-   operación sobre el rack, que ya quedó guardada. */
-function agregarAlHistorial(entrada){
-  try {
-    const historial = leerHistorial();
-    historial.push({ ...entrada, fecha: new Date().toISOString() });
-    escribirListaJson(RACK_HISTORIAL_PATH, historial);
-  } catch(err){
-    console.error('[historial] no se registró el evento:', err.message, entrada);
-  }
-}
-function esHoy(fechaISO){
-  const hoy = new Date();
-  const d = new Date(fechaISO);
-  return d.getFullYear()===hoy.getFullYear() && d.getMonth()===hoy.getMonth() && d.getDate()===hoy.getDate();
-}
-
-/* Los registros viejos del historial (de antes de las áreas) no tienen
-   "area": son todos de papel cerámico. */
-function esDelArea(h, area){ return (h.area || 'papel') === area.id; }
-
-app.get('/api/rack-simulado', (req, res) => {
-  const area = areaDe(req);
-  exigirRackCasillas(area);
-  res.json(leerRackSimulado(area));
-});
-
-app.post('/api/rack-simulado/agregar', exigirLogin, (req, res) => {
-  const area = areaDe(req);
-  exigirRackCasillas(area);
-  const orden = Object.assign({}, req.body || {});
-  if(!orden.Ordem_Serial) return res.status(400).json({ error: 'falta Ordem_Serial' });
-  const lista = leerRackSimulado(area);
+app.post('/api/rack-simulado/agregar', exigirPermiso('ordenes'), conArea((req, res, area) => {
+  const orden = racksMod.limpiarOrden(req.body);
+  const lista = racks.leer(area);
   if(lista.find(o=>o.Ordem_Serial===orden.Ordem_Serial)){
     return res.status(409).json({ error: 'esa orden ya está en el rack' });
   }
-  const ubicacion = proximaUbicacionLibre(area, lista);
-  if(!ubicacion) return res.status(409).json({ error: `rack lleno, las ${capacidadRack(area)} ubicaciones están ocupadas` });
+  const ubicacion = racksMod.proximaUbicacionLibre(area, lista);
+  if(!ubicacion) return res.status(409).json({ error: `rack lleno, las ${racksMod.capacidad(area)} ubicaciones están ocupadas` });
   lista.push({ ...orden, ubicacion });
-  guardarRackSimulado(area, lista);
-  agregarAlHistorial({ area: area.id, Ordem_Serial: orden.Ordem_Serial, ubicacion, usuario: req.usuario, evento: 'entrada' });
+  racks.guardar(area, lista);
+  racks.agregarAlHistorial(area, { area: area.id, Ordem_Serial: orden.Ordem_Serial, ubicacion, usuario: req.usuario, evento: 'entrada' });
   res.json({ ok: true, ubicacion });
-});
+}));
 
-app.post('/api/rack-simulado/:orden/salida', (req, res) => {
-  const area = areaDe(req);
-  exigirRackCasillas(area);
+app.post('/api/rack-simulado/:orden/salida', exigirPermiso('rack'), conArea((req, res, area) => {
   const { orden } = req.params;
-  let lista = leerRackSimulado(area);
-  // Guardamos el renglón COMPLETO (no solo el Ordem_Serial) antes de
-  // sacarlo — así, si después hace falta una reentrada por error del
-  // operario, se puede reconstruir la orden entera (ubicación incluida)
-  // sin tener que volver a pedir nada a SQL.
+  const lista = racks.leer(area);
+  // se guarda el renglón COMPLETO antes de sacarlo: si después hace falta
+  // una reentrada por error del operario, se reconstruye la orden entera
+  // (ubicación incluida) sin volver a pedir nada a SQL
   const encontrada = lista.find(o=>o.Ordem_Serial === orden);
-  lista = lista.filter(o=>o.Ordem_Serial !== orden);
-  guardarRackSimulado(area, lista);
-  const sacada = !!encontrada;
-  if(sacada) agregarAlHistorial({ area: area.id, Ordem_Serial: orden, ubicacion: encontrada.ubicacion, orden: encontrada, usuario: req.usuario||null, evento: 'salida' });
-  res.json({ ok: true, sacada });
-});
+  // si no estaba, no se reescribe el archivo ni se avisa a todas las PCs
+  if(encontrada){
+    racks.guardar(area, lista.filter(o=>o.Ordem_Serial !== orden));
+    racks.agregarAlHistorial(area, { area: area.id, Ordem_Serial: orden, ubicacion: encontrada.ubicacion, orden: encontrada, usuario: req.usuario||null, evento: 'salida' });
+  }
+  res.json({ ok: true, sacada: !!encontrada });
+}));
 
-/* Para la pantalla de "reentrada": dado un número de orden que NO está
-   ahora mismo en el rack, busca en el historial la ÚLTIMA vez que
-   salió, y devuelve en qué posición estaba — así el operario puede
-   reingresarla ahí mismo en vez de que la app le asigne una posición
-   libre cualquiera (útil cuando le dieron salida por error). Si la
-   orden SÍ está en el rack ahora mismo, o nunca tuvo una salida
-   registrada, devuelve encontrada:false. */
-app.get('/api/rack-simulado/:orden/ultima-salida', (req, res) => {
-  const area = areaDe(req);
+/* Para la "reentrada": dado un número de orden que NO está ahora en el
+   rack, busca en el historial la ÚLTIMA vez que salió y en qué posición
+   estaba, para reingresarla ahí mismo (útil cuando le dieron salida por
+   error). */
+app.get('/api/rack-simulado/:orden/ultima-salida', exigirPermiso('rack'), conArea((req, res, area) => {
   const { orden } = req.params;
-  const enRackAhora = leerRackSimulado(area).some(o=>o.Ordem_Serial === orden);
-  if(enRackAhora) return res.json({ encontrada: false, motivo: 'la orden ya está en el rack ahora mismo' });
-  const historial = leerHistorial();
-  // el historial solo crece (nunca se reescribe), así que la última
-  // entrada de 'salida' para esta orden, recorriendo desde el final,
-  // es la más reciente.
+  if(racks.leer(area).some(o=>o.Ordem_Serial === orden)) return res.json({ encontrada: false, motivo: 'la orden ya está en el rack ahora mismo' });
+  const historial = racks.leerHistorial(area);
+  // el historial solo crece: recorriendo desde el final, la primera
+  // 'salida' de esta orden es la más reciente
   for(let i=historial.length-1; i>=0; i--){
     const h = historial[i];
-    if(h.Ordem_Serial===orden && h.evento==='salida' && h.ubicacion && esDelArea(h, area)){
+    if(h.Ordem_Serial===orden && h.evento==='salida' && h.ubicacion){
       return res.json({ encontrada: true, ubicacion: h.ubicacion, orden: h.orden||null, fecha: h.fecha });
     }
   }
   res.json({ encontrada: false, motivo: 'no hay ninguna salida registrada para esa orden' });
-});
+}));
 
-/* Reingresa una orden al rack simulado, FORZANDO una ubicación
-   específica (en vez de calcular la próxima libre, como hace
-   /agregar) — pensado para el caso de "le dieron salida por error,
-   hay que reingresarla en el mismo lugar en el que estaba". Si esa
-   posición ya la ocupa OTRA orden (por ejemplo porque en el rato que
-   pasó, otra pieza cortada ya la usó), se rechaza en vez de pisarla en
-   silencio — el operario tiene que resolver ese choque a mano (sacar
-   la que está ahí, o reingresar en otra posición desde "+ Agregar"
-   normal). */
-app.post('/api/rack-simulado/reentrada', exigirLogin, (req, res) => {
-  const area = areaDe(req);
-  exigirRackCasillas(area);
+/* Reingresa una orden FORZANDO una ubicación (la que tenía). Si esa
+   posición ya la ocupa OTRA orden, se rechaza en vez de pisarla. */
+app.post('/api/rack-simulado/reentrada', exigirPermiso('rack'), conArea((req, res, area) => {
   const { ubicacion } = req.body || {};
-  const orden = (req.body && req.body.orden) || {};
-  if(!orden.Ordem_Serial) return res.status(400).json({ error: 'falta Ordem_Serial' });
+  const orden = racksMod.limpiarOrden((req.body && req.body.orden) || {});
   if(!ubicacion) return res.status(400).json({ error: 'falta la ubicación a reingresar' });
-  const lista = leerRackSimulado(area);
+  if(!racksMod.ubicacionValida(area, ubicacion)) return res.status(400).json({ error: `la ubicación "${String(ubicacion).slice(0, 10)}" no existe en este rack` });
+  const lista = racks.leer(area);
   if(lista.find(o=>o.Ordem_Serial===orden.Ordem_Serial)){
     return res.status(409).json({ error: 'esa orden ya está en el rack' });
   }
@@ -824,263 +768,41 @@ app.post('/api/rack-simulado/reentrada', exigirLogin, (req, res) => {
     return res.status(409).json({ error: `la posición ${ubicacion} ya la ocupa la orden ${ocupante.Ordem_Serial} — sacala primero, o reingresá esta desde "+ Agregar" para que le asignen otra posición libre` });
   }
   lista.push({ ...orden, ubicacion });
-  guardarRackSimulado(area, lista);
-  agregarAlHistorial({ area: area.id, Ordem_Serial: orden.Ordem_Serial, ubicacion, usuario: req.usuario, evento: 'reentrada' });
+  racks.guardar(area, lista);
+  racks.agregarAlHistorial(area, { area: area.id, Ordem_Serial: orden.Ordem_Serial, ubicacion, usuario: req.usuario, evento: 'reentrada' });
   res.json({ ok: true, ubicacion });
-});
+}));
+
+/* Resumen del día: cuántas entraron y salieron del rack HOY. */
+app.get('/api/rack-resumen-dia', exigirPermiso('ordenes','rack'), conArea((req, res, area) => {
+  let cortadasHoy = 0, sacadasHoy = 0;
+  const historial = racks.leerHistorial(area);
+  // el historial está en orden de llegada: se recorre desde el final y se
+  // corta en el primer registro de otro día (antes se filtraba entero)
+  for(let i=historial.length-1; i>=0; i--){
+    const h = historial[i];
+    if(!esHoy(h.fecha)) break;
+    if(h.evento==='entrada') cortadasHoy++;
+    else if(h.evento==='salida') sacadasHoy++;
+  }
+  res.json({ cortadasHoy, sacadasHoy, enRackAhora: racks.leer(area).length });
+}, false)); // también la piden las áreas sin rack de casillas (contesta ceros)
 
 /* ============ Inventario por material y medida (Tecoflex) ============
-   No va por órdenes: es un stock en cantidades, por (material, medida).
-   - GET  /api/inventario[?version=N]  -> {version, stock, movimientos, hoy}  (o {sinCambios:true})
-   - POST /api/inventario/movimientos  -> {items:[{tipo, material, medida, cantidad}], nota, idCliente}
-     El lote se valida ENTERO antes de tocar nada (material y medida
-     válidos, cantidad entera > 0, ninguna salida deja stock negativo): si
-     una sola línea falla no se aplica ninguna. Node atiende un pedido por
-     vez y todo esto es sincrónico, así que 30 PCs registrando a la vez no
-     se pisan.
-
-   Diseño para muchos usuarios a la vez (antes: un JSON con TODO el
-   historial que se leía y reescribía entero en cada movimiento — cada
-   registro tardaba más que el anterior y bloqueaba el puente para todos):
-   - movimientos-<área>.jsonl: DIARIO de movimientos, una línea por
-     movimiento, solo se AGREGA al final (costo fijo, no crece con el
-     historial). Es la fuente de verdad.
-   - El stock vive en memoria y se reconstruye al arrancar repasando el
-     diario de punta a punta — así stock e historial nunca pueden quedar
-     distintos (antes, un corte entre las dos escrituras los desfasaba).
-     inventario-<área>.json queda como foto legible del stock actual.
-   - version = cantidad de movimientos; cada cambio se avisa en vivo
-     (ver /api/eventos) con el movimiento y el stock nuevo.
-   - idCliente: la app manda un id por carrito. Si el mismo lote llega dos
-     veces (doble clic, o la red cortó la respuesta y el operario
-     reintentó), se devuelve el resultado de la primera vez en lugar de
-     descontar dos veces.
-   No pide sesión (igual que el Rack); si hay una abierta, queda a su nombre. */
-const INV_MAX_CANTIDAD = 100000;
-const INV_RECIENTES = 300;  // movimientos que se mandan a la pantalla
-const inventarioPath  = area => path.join(__dirname, `inventario-${area.id}.json`);
-const diarioPath      = area => path.join(__dirname, `movimientos-${area.id}.jsonl`);
-const historialViejoPath = area => path.join(__dirname, `movimientos-${area.id}.json`);
-const invClave = (m, d) => m+'|'+d;
-const inventarios = new Map(); // área -> {version, stock:Map, movimientos:[], porIdCliente:Map}
-
-/* Carga (una sola vez por área) el diario y reconstruye el stock. */
-function inventarioDe(area){
-  let inv = inventarios.get(area.id);
-  if(inv) return inv;
-  // migración única: el historial viejo (JSON con un arreglo) pasa al diario
-  const viejo = historialViejoPath(area), diario = diarioPath(area);
-  if(fs.existsSync(viejo) && !fs.existsSync(diario)){
-    const lista = leerListaJson(viejo);
-    fs.writeFileSync(diario, lista.map(m=>JSON.stringify(m)).join('\n') + (lista.length ? '\n' : ''), 'utf8');
-    fs.renameSync(viejo, viejo + '.migrado');
-    console.log(`[inventario] ${area.id}: ${lista.length} movimiento(s) migrados a ${path.basename(diario)}`);
-  }
-  inv = {version:0, stock:new Map(), movimientos:[], porIdCliente:new Map()};
-  // claves viejas de material -> la actual (campo "alias" en areas-config.js).
-  // El diario NO se reescribe: la traducción es solo en memoria.
-  const alias = new Map();
-  area.materiales.forEach(m=>(m.alias||[]).forEach(a=>alias.set(a, m)));
-  const normalizar = items => items.forEach(l=>{
-    const m = alias.get(l.material);
-    if(m){ l.material = m.id; l.materialNombre = m.nombre; l.codigo = m.codigo||null; }
-  });
-  if(fs.existsSync(diario)){
-    const texto = fs.readFileSync(diario, 'utf8');
-    // si un apagón cortó la última línea a la mitad, el próximo movimiento
-    // se pegaría a ese pedazo y quedaría ilegible (se perdería en el
-    // siguiente reinicio): se cierra esa línea antes de seguir agregando
-    if(texto && !texto.endsWith('\n')) fs.appendFileSync(diario, '\n', 'utf8');
-    const lineas = texto.split('\n');
-    let malas = 0;
-    lineas.forEach(t=>{
-      if(!t.trim()) return;
-      let mv; try { mv = JSON.parse(t); } catch(e){ malas++; return; } // p.ej. una línea cortada por un apagón
-      normalizar(mv.items);
-      aplicarAlStock(inv.stock, mv.items);
-      inv.movimientos.push(mv);
-      if(mv.idCliente) inv.porIdCliente.set(mv.idCliente, mv);
-    });
-    if(malas) console.error(`[inventario] ${area.id}: ${malas} línea(s) ilegibles en ${path.basename(diario)} — se saltearon`);
-  }
-  // stock de un material que ya no está en la lista: no se esconde, se avisa
-  // (la pantalla lo muestra aparte, marcado "material sin configurar")
-  const conocidos = new Set(area.materiales.map(m=>m.id));
-  const huerfanos = [...new Set([...inv.stock.keys()].map(k=>k.split('|')[0]).filter(m=>!conocidos.has(m)))];
-  if(huerfanos.length) console.error(`[inventario] ${area.id}: hay stock de material(es) que no están en js/core/areas-config.js: ${huerfanos.join(', ')} — agregalos ahí (o como "alias" del material correcto)`);
-  inv.version = inv.movimientos.length;
-  inventarios.set(area.id, inv);
-  // la foto legible se guarda con atraso (ver programarFotoStock): si el
-  // puente se cerró en ese segundo quedó vieja, así que se rehace al cargar
-  try { escribirListaJson(inventarioPath(area), stockComoLista(inv)); } catch(e){ console.error('[inventario] foto del stock:', e.message); }
-  return inv;
-}
-function aplicarAlStock(stock, items){
-  items.forEach(l=>{
-    const k = invClave(l.material, l.medida);
-    const n = (stock.get(k)||0) + (l.tipo==='entrada' ? l.cantidad : -l.cantidad);
-    if(n) stock.set(k, n); else stock.delete(k);
-  });
-}
-function stockComoLista(inv){
-  const lista = [];
-  inv.stock.forEach((cantidad, k)=>{ if(cantidad>0){ const [material, medida] = k.split('|'); lista.push({material, medida, cantidad}); } });
-  return lista;
-}
-/* Totales de HOY sobre TODOS los movimientos del día (antes la pantalla los
-   sumaba solo sobre los últimos 300: en un día con mucho movimiento daban
-   de menos). Recorre desde el final hasta el primer movimiento de ayer. */
-function totalesDeHoy(inv){
-  let sale = 0, entra = 0;
-  for(let i=inv.movimientos.length-1; i>=0; i--){
-    const mv = inv.movimientos[i];
-    if(!esHoy(mv.fecha)) break;
-    mv.items.forEach(l=>{ if(l.tipo==='salida') sale += l.cantidad; else entra += l.cantidad; });
-  }
-  return {sale, entra};
-}
-/* La foto legible del stock (inventario-<área>.json) no es la fuente de
-   verdad (lo es el diario), así que no hace falta reescribirla en cada
-   movimiento: con mucha actividad se guarda como mucho una vez por segundo. */
-const fotosPendientes = new Set();
-function programarFotoStock(area, inv){
-  if(fotosPendientes.has(area.id)) return;
-  fotosPendientes.add(area.id);
-  setTimeout(()=>{
-    fotosPendientes.delete(area.id);
-    try { escribirListaJson(inventarioPath(area), stockComoLista(inv)); }
-    catch(e){ console.error('[inventario] no se pudo guardar la foto del stock:', e.message); }
-  }, 1000);
-}
-function exigirInventario(area){
-  if(area.rack.tipo !== 'inventario'){
-    const e = new Error(`${area.nombre} no maneja inventario por material y medida.`);
-    e.status = 400; throw e;
-  }
-}
-function usuarioDeSesion(req){
-  const token = req.get('x-auth-token');
-  const s = token && sesiones.get(token);
-  return s ? s.usuario : null;
-}
-/* Valida y normaliza una línea; devuelve {linea} o {error}. */
-function lineaInventario(area, it, i){
-  const n = `línea ${i+1}`;
-  if(!it || (it.tipo!=='entrada' && it.tipo!=='salida')) return {error:`${n}: tipo inválido (entrada o salida)`};
-  const mat = area.materiales.find(m=>m.id===it.material || (m.alias||[]).includes(it.material));
-  if(!mat) return {error:`${n}: material desconocido "${it.material}"`};
-  const medida = String(it.medida==null?'':it.medida).trim().replace('.', ',');
-  if(!mat.medidas.includes(medida)) return {error:`${n}: ${mat.nombre} no tiene medida ${medida||'(vacía)'} mm`};
-  const cantidad = Number(it.cantidad);
-  if(!Number.isInteger(cantidad) || cantidad<=0 || cantidad>INV_MAX_CANTIDAD) return {error:`${n}: cantidad inválida "${it.cantidad}" (entero de 1 a ${INV_MAX_CANTIDAD})`};
-  return {linea:{tipo:it.tipo, material:mat.id, materialNombre:mat.nombre, codigo:mat.codigo||null, medida, cantidad}};
-}
-
-app.get('/api/inventario', (req, res) => {
-  const area = areaDe(req);
-  exigirInventario(area);
-  const inv = inventarioDe(area);
-  // respaldo de las PCs sin conexión en vivo: si ya tienen esta versión,
-  // no se les manda nada de nuevo
-  if(req.query.version!=null && Number(req.query.version)===inv.version) return res.json({ sinCambios: true, version: inv.version });
-  res.json({
-    version: inv.version,
-    stock: stockComoLista(inv),
-    movimientos: inv.movimientos.slice(-INV_RECIENTES).reverse(),
-    hoy: totalesDeHoy(inv)
-  });
+   Lógica y almacenamiento en server/inventario.js. */
+app.get('/api/inventario', exigirPermiso('rack'), (req, res) => {
+  try { res.json(inventario.consultar(areaDe(req), req.query.version)); }
+  catch(e){ responderError(res, 'inventario', e); }
+});
+app.post('/api/inventario/movimientos', exigirPermiso('rack'), (req, res) => {
+  try {
+    const r = inventario.registrar(areaDe(req), req.body, req.usuario);
+    res.status(r.status).json(r.cuerpo);
+  } catch(e){ responderError(res, 'inventario/movimientos', e); }
 });
 
-app.post('/api/inventario/movimientos', (req, res) => {
-  const area = areaDe(req);
-  exigirInventario(area);
-  const inv = inventarioDe(area);
-  const idCliente = typeof (req.body && req.body.idCliente)==='string' ? req.body.idCliente.slice(0, 64) : null;
-  if(idCliente && inv.porIdCliente.has(idCliente)){
-    // el mismo carrito ya se registró (reintento): no se vuelve a aplicar
-    return res.json({ ok: true, repetido: true, version: inv.version, movimiento: inv.porIdCliente.get(idCliente), stock: stockComoLista(inv), hoy: totalesDeHoy(inv) });
-  }
-  const items = (req.body && req.body.items) || [];
-  if(!Array.isArray(items) || !items.length) return res.status(400).json({ error: 'no hay ningún movimiento para registrar' });
-  if(items.length > 500) return res.status(400).json({ error: 'demasiadas líneas en un solo lote (máximo 500)' });
-
-  const errores = [], lineas = [];
-  items.forEach((it, i)=>{ const r = lineaInventario(area, it, i); if(r.error) errores.push(r.error); else lineas.push(r.linea); });
-  if(errores.length) return res.status(400).json({ error: 'El lote tiene líneas inválidas — no se registró nada.', detalles: errores });
-
-  // stock resultante = actual + entradas − salidas, por (material, medida)
-  const neto = new Map(), saleTotal = new Map();
-  lineas.forEach(l=>{
-    const k = invClave(l.material, l.medida);
-    neto.set(k, (neto.get(k)||0) + (l.tipo==='entrada' ? l.cantidad : -l.cantidad));
-    if(l.tipo==='salida') saleTotal.set(k, (saleTotal.get(k)||0) + l.cantidad);
-  });
-  const faltantes = [];
-  neto.forEach((delta, k)=>{
-    const hay = inv.stock.get(k)||0;
-    if(hay + delta < 0){
-      const l = lineas.find(x=>invClave(x.material, x.medida)===k);
-      faltantes.push(`${l.materialNombre} ${l.medida} mm: hay ${hay}, salen ${saleTotal.get(k)}`);
-    }
-  });
-  if(faltantes.length) return res.status(409).json({ error: 'No alcanza el stock — no se registró nada.', detalles: faltantes, version: inv.version });
-
-  const movimiento = {
-    id: crypto.randomBytes(6).toString('hex'),
-    idCliente,
-    fecha: new Date().toISOString(),
-    usuario: usuarioDeSesion(req),
-    nota: String((req.body && req.body.nota) || '').trim().slice(0, 200) || null,
-    items: lineas
-  };
-  // primero el diario (si no se puede escribir, el pedido falla y el stock
-  // en memoria no se toca); después la memoria; la foto del stock al final
-  fs.appendFileSync(diarioPath(area), JSON.stringify(movimiento) + '\n', 'utf8');
-  aplicarAlStock(inv.stock, lineas);
-  inv.movimientos.push(movimiento);
-  if(idCliente) inv.porIdCliente.set(idCliente, movimiento);
-  inv.version++;
-  const stock = stockComoLista(inv), hoy = totalesDeHoy(inv);
-  programarFotoStock(area, inv);
-  notificar({ tipo:'inventario', area: area.id, version: inv.version, movimiento, stock, hoy });
-  res.json({ ok: true, version: inv.version, movimiento, stock, hoy });
-});
-
-/* ============ Cambios en vivo (Server-Sent Events) ============
-   Cada pestaña abierta de la app mantiene UNA conexión acá; cuando
-   alguien registra un movimiento o mueve algo del rack, el puente se lo
-   avisa al instante a todas. Reemplaza a las 30 PCs preguntando cada 6 s
-   "¿cambió algo?" (que además veían los cambios con hasta 6 s de atraso).
-   EventSource no puede mandar cabeceras: el API_TOKEN viaja como
-   ?api_token=... (ver el control de API_TOKEN de arriba). */
-const clientesEnVivo = new Set();
-function notificar(evento){
-  const datos = `data: ${JSON.stringify(evento)}\n\n`;
-  clientesEnVivo.forEach(res=>{ try { res.write(datos); } catch(e){ clientesEnVivo.delete(res); } });
-}
-app.get('/api/eventos', (req, res) => {
-  res.set({ 'Content-Type':'text/event-stream', 'Cache-Control':'no-cache', 'Connection':'keep-alive', 'X-Accel-Buffering':'no' });
-  res.flushHeaders();
-  res.write('retry: 3000\n\n'); // si se corta, el navegador reintenta a los 3 s
-  clientesEnVivo.add(res);
-  req.on('close', ()=>clientesEnVivo.delete(res));
-});
-// latido cada 20 s: mantiene viva la conexión (antivirus, proxies) y
-// permite detectar y soltar las pestañas que se cerraron sin avisar
-setInterval(()=>{ clientesEnVivo.forEach(res=>{ try { res.write(': ping\n\n'); } catch(e){ clientesEnVivo.delete(res); } }); }, 20000).unref();
-
-/* Resumen del día para Lista de corte: cuántas entraron y salieron del
-   rack HOY, contra el historial de arriba. No hace falta guardar nada
-   nuevo para esto — se calcula al vuelo cada vez que lo piden. */
-app.get('/api/rack-resumen-dia', exigirLogin, (req, res) => {
-  const area = areaDe(req);
-  const deHoy = leerHistorial().filter(h=>esHoy(h.fecha) && esDelArea(h, area));
-  res.json({
-    cortadasHoy: deHoy.filter(h=>h.evento==='entrada').length,
-    sacadasHoy: deHoy.filter(h=>h.evento==='salida').length,
-    enRackAhora: leerRackSimulado(area).length
-  });
-});
+/* ============ Cambios en vivo (ver server/en-vivo.js) ============ */
+app.get('/api/eventos', exigirLogin, enVivo.manejar);
 
 /* ============ Impresión directa de stickers en la Zebra (USB) ============
    La Zebra está conectada por USB a ESTA PC (la que corre el puente),
@@ -1099,19 +821,25 @@ app.get('/api/rack-resumen-dia', exigirLogin, (req, res) => {
    Si no completaste ZEBRA_PRINTER_SHARE en tu .env, este endpoint
    avisa claro en vez de fallar raro — la app entonces sigue ofreciendo
    el PDF de stickers como respaldo. */
-app.post('/api/imprimir-zpl', exigirLogin, (req, res) => {
+app.post('/api/imprimir-zpl', exigirPermiso('ordenes','rack'), (req, res) => {
   const printerShare = process.env.ZEBRA_PRINTER_SHARE;
   if(!printerShare){
     return res.status(501).json({ error: 'ZEBRA_PRINTER_SHARE no está configurado en tu .env — todavía no se puede imprimir directo (ver CONECTAR_SQL.md).' });
   }
+  // el nombre va dentro de un comando de Windows: solo caracteres de un
+  // nombre de recurso compartido (nada de comillas, & o |, que permitirían
+  // colar otro comando si el .env tuviera algo raro)
+  if(!/^[\w.$ -]{1,80}$/.test(printerShare)){
+    return res.status(500).json({ error: 'ZEBRA_PRINTER_SHARE tiene caracteres no válidos en el .env (solo letras, números, espacio, punto, guion y $).' });
+  }
   const { zpl } = req.body || {};
-  if(!zpl) return res.status(400).json({ error: 'falta el contenido ZPL a imprimir' });
+  if(typeof zpl !== 'string' || !zpl) return res.status(400).json({ error: 'falta el contenido ZPL a imprimir' });
 
-  const tmpFile = path.join(os.tmpdir(), `sticker_${Date.now()}_${Math.random().toString(16).slice(2,8)}.zpl`);
+  const tmpFile = path.join(os.tmpdir(), `sticker_${Date.now()}_${crypto.randomBytes(4).toString('hex')}.zpl`);
   try {
     fs.writeFileSync(tmpFile, zpl, 'utf8');
   } catch(err){
-    return res.status(500).json({ error: 'no se pudo crear el archivo temporal: '+err.message });
+    return responderError(res, 'imprimir-zpl', err);
   }
   // "copy /b" manda el archivo TAL CUAL (binario/crudo), sin que Windows
   // intente convertirlo — es el mismo truco que se usa hace años para
@@ -1119,11 +847,14 @@ app.post('/api/imprimir-zpl', exigirLogin, (req, res) => {
   // comandos. \\localhost\NombreCompartido apunta a la impresora
   // instalada en ESTA MISMA PC, usando su nombre de recurso compartido.
   const comando = `copy /b "${tmpFile}" "\\\\localhost\\${printerShare}"`;
-  exec(comando, (err, stdout, stderr) => {
+  // con tope de tiempo: si la impresora no contesta, el pedido no queda
+  // colgado para siempre (la app cae sola al PDF de respaldo)
+  exec(comando, { timeout: 30000, windowsHide: true }, (err, stdout, stderr) => {
     fs.unlink(tmpFile, ()=>{}); // limpieza del temporal; si falla no importa, no bloquea la respuesta
     if(err){
-      console.error('[imprimir-zpl]', err.message, stderr);
-      return res.status(500).json({ error: 'no se pudo mandar a imprimir: '+err.message });
+      console.error('[imprimir-zpl]', stderr);
+      err.message = 'no se pudo mandar a imprimir: ' + err.message;
+      return responderError(res, 'imprimir-zpl', err);
     }
     res.json({ ok: true });
   });
@@ -1139,58 +870,66 @@ app.post('/api/imprimir-zpl', exigirLogin, (req, res) => {
    La app siempre manda los dos datos (orden y archivo) en el pedido,
    así no hace falta que el navegador sepa cuál de los dos modos tenés
    configurado — este endpoint elige solo. */
-app.get('/api/dxf', exigirLogin, async (req, res) => {
+const DXF_MAX_BYTES = 50 * 1048576;
+const RAIZ_APP = path.resolve(__dirname, '..');
+const DXF_PREFIJOS = (process.env.DXF_ALLOWED_PREFIXES || '')
+  .split(',').map(s=>s.trim().replace(/\//g,'\\').replace(/\\+$/,'').toLowerCase()).filter(Boolean);
+/* "archivo" llega en la URL, mandado por el navegador: normalmente es lo
+   que trae tu SQL (Desenho_Path), pero alguien con sesión puede escribir
+   otra cosa a mano. Sin estos controles, con eso se podía:
+   - leer CUALQUIER archivo de esta PC, incluido server/.env (con las
+     contraseñas de SQL) y usuarios.json;
+   - hacer que esta PC se conecte a una carpeta de red de otra máquina
+     (\\otra-pc\x) y le entregue, sin querer, el hash de la contraseña de
+     Windows del usuario que corre el puente.
+   Reglas: solo archivos .dxf; nada de ".." para salirse de una carpeta;
+   nunca dentro de la carpeta de esta app; y si DXF_ALLOWED_PREFIXES está
+   completo, solo dentro de esas carpetas (comparando la carpeta entera:
+   "\\srv\cnc" no deja pasar "\\srv\cnc-otra"). */
+function rutaDxfPermitida(archivo){
+  if(typeof archivo !== 'string' || !archivo.trim()) return { error: 'falta el parámetro "archivo"' };
+  if(archivo.length > 1024 || archivo.includes('\0')) return { error: 'nombre de archivo no permitido' };
+  if(!/\.dxf$/i.test(archivo.trim())) return { error: 'solo se pueden abrir archivos .dxf' };
+  if(archivo.split(/[\\/]+/).some(seg=>seg.trim()==='..')) return { error: 'nombre de archivo no permitido' };
+  const esRutaCompleta = /^(\\\\|\/|[a-zA-Z]:[\\/])/.test(archivo);
+  let fullPath;
+  if(esRutaCompleta){
+    // la base de datos ya trae la ruta COMPLETA (ej. \\servidor\carpeta\...):
+    // se usa tal cual, sin sumarle DXF_BASE_PATH
+    if(DXF_PREFIJOS.length){
+      const norm = archivo.replace(/\//g,'\\').toLowerCase();
+      if(!DXF_PREFIJOS.some(p=>norm.startsWith(p + '\\'))) return { error: 'ruta de archivo no permitida (fuera de DXF_ALLOWED_PREFIXES)' };
+    }
+    fullPath = archivo;
+  } else {
+    // nombre suelto: se le suma DXF_BASE_PATH y tiene que quedar adentro
+    const base = path.resolve(process.env.DXF_BASE_PATH || '');
+    fullPath = path.resolve(base, archivo);
+    if(!fullPath.startsWith(base + path.sep)) return { error: 'nombre de archivo no permitido' };
+  }
+  const resuelta = path.resolve(fullPath).toLowerCase();
+  if(resuelta === RAIZ_APP.toLowerCase() || resuelta.startsWith(RAIZ_APP.toLowerCase() + path.sep)) return { error: 'nombre de archivo no permitido' };
+  return { fullPath };
+}
+app.get('/api/dxf', exigirPermiso('ordenes'), async (req, res) => {
   const source = (process.env.DXF_SOURCE || 'sql').toLowerCase();
   try {
     if(source === 'file'){
-      const archivo = req.query.archivo;
-      if(!archivo) return res.status(400).json({ error: 'falta el parámetro "archivo"' });
-      // tu SQL ya trae la RUTA COMPLETA (de red, ej. "\\\\192.168.2.2\\cnc-revisados\\..."
-      // o "//192.168.2.2/cnc-revisados/...") — en ese caso se usa tal cual,
-      // sin sumarle DXF_BASE_PATH: la base de datos es la que decide dónde
-      // está cada archivo, no una carpeta fija. Si en cambio lo que viene
-      // es solo un nombre de archivo (sin ruta), sí se le suma
-      // DXF_BASE_PATH, y ahí sí se exige que quede DENTRO de esa carpeta
-      // (para que un dato sucio en la base no pueda leer cualquier cosa
-      // de la PC).
-      const esRutaCompleta = /^(\\\\|\/|[a-zA-Z]:[\\/])/.test(archivo);
-      let fullPath;
-      if(esRutaCompleta){
-        // OJO — "archivo" llega como parámetro de la URL, mandado por el
-        // navegador: aunque el valor NORMALMENTE viene de tu columna SQL
-        // (Desenho_Path), nada impide que alguien ya logueado en la app
-        // edite ese parámetro a mano (o con las herramientas del navegador)
-        // y pida leer OTRA ruta completa de la PC donde corre este puente
-        // — sesión + ruta completa = podría leer cualquier archivo que el
-        // usuario de Windows que corre "npm start" pueda leer, no solo DXF.
-        // Si configurás DXF_ALLOWED_PREFIXES (uno o más prefijos de red
-        // separados por coma, ver .env.example) esto se frena acá: se
-        // exige que la ruta pedida empiece por alguno de esos prefijos,
-        // igual que ya se exige para el caso de nombre suelto de abajo.
-        // Si lo dejás vacío (como venía por default), queda como antes.
-        const prefijos = (process.env.DXF_ALLOWED_PREFIXES || '')
-          .split(',').map(s=>s.trim()).filter(Boolean);
-        if(prefijos.length){
-          const norm = s => s.replace(/\//g,'\\').toLowerCase();
-          const archivoNorm = norm(archivo);
-          const permitido = prefijos.some(p => archivoNorm.startsWith(norm(p)));
-          if(!permitido){
-            return res.status(400).json({ error: 'ruta de archivo no permitida (fuera de DXF_ALLOWED_PREFIXES)' });
-          }
-        }
-        fullPath = archivo;
-      } else {
-        const base = path.resolve(process.env.DXF_BASE_PATH || '');
-        fullPath = path.resolve(base, archivo);
-        if(!fullPath.startsWith(base + path.sep) && fullPath!==base){
-          return res.status(400).json({ error: 'nombre de archivo no permitido' });
-        }
+      const r = rutaDxfPermitida(req.query.archivo);
+      if(r.error) return res.status(400).json({ error: r.error });
+      // asíncrono: leer de una carpeta de red puede tardar segundos (o
+      // colgarse si el servidor de archivos no contesta). Con la lectura
+      // sincrónica de antes, ese rato el puente no atendía a NADIE más.
+      let st;
+      try { st = await fs.promises.stat(r.fullPath); }
+      catch(e){
+        if(e.code==='ENOENT' || e.code==='ENOTDIR') return res.status(404).json({ error: `no se encontró el archivo: ${r.fullPath}` });
+        throw e;
       }
-      if(!fs.existsSync(fullPath)){
-        return res.status(404).json({ error: `no se encontró el archivo: ${fullPath}` });
-      }
-      const contenido = fs.readFileSync(fullPath, 'utf8');
-      return res.json({ contenido, ruta: fullPath });
+      if(!st.isFile()) return res.status(400).json({ error: 'la ruta pedida no es un archivo' });
+      if(st.size > DXF_MAX_BYTES) return res.status(413).json({ error: `el DXF pesa ${Math.round(st.size/1048576)} MB; el máximo es ${DXF_MAX_BYTES/1048576} MB` });
+      const contenido = await fs.promises.readFile(r.fullPath, 'utf8');
+      return res.json({ contenido });
     }
 
     // modo SQL (default): el DXF viene de la base, no de un archivo
@@ -1247,7 +986,7 @@ function exigirRackSql(req, res, next){
   res.status(501).json({ error: `El rack de ${area.nombre} todavía no tiene tabla en SQL — se maneja simulado en el puente.`, pendiente: true });
 }
 
-app.post('/api/ordenes/:orden/marcar-en-stock', exigirLogin, exigirRackSql, bloquearSiSoloLectura, async (req, res) => {
+app.post('/api/ordenes/:orden/marcar-en-stock', exigirPermiso('ordenes'), exigirRackSql, bloquearSiSoloLectura, async (req, res) => {
   try {
     const { orden } = req.params;
     const { rack } = req.body || {};
@@ -1274,13 +1013,12 @@ app.post('/api/ordenes/:orden/marcar-en-stock', exigirLogin, exigirRackSql, bloq
     notificar({ tipo:'rack', area: 'papel' });
     res.json({ ok: true, ubicacion });
   } catch (err) {
-    console.error('[marcar-en-stock]', err.message);
-    res.status(500).json({ error: err.message });
+    responderError(res, 'marcar-en-stock', err);
   }
 });
 
 /* ============ 4) Órdenes que están ahora mismo en el rack ============ */
-app.get('/api/rack-actual', exigirRackSql, async (req, res) => {
+app.get('/api/rack-actual', exigirPermiso('rack','ordenes'), exigirRackSql, async (req, res) => {
   try {
     const pool = await getPool();
     const result = await pool.request().query(queries.rackActual);
@@ -1307,7 +1045,7 @@ app.get('/api/rack-actual', exigirRackSql, async (req, res) => {
 // escritura ya está apagada por default (PERMITIR_ESCRITURA_SQL=false), así
 // que esto no podía escribir nada de todas formas — pero si el día de
 // mañana alguien prende esa bandera, que quede protegido igual que el resto.
-app.post('/api/rack/:orden/salida', exigirLogin, exigirRackSql, bloquearSiSoloLectura, async (req, res) => {
+app.post('/api/rack/:orden/salida', exigirPermiso('rack'), exigirRackSql, bloquearSiSoloLectura, async (req, res) => {
   try {
     const { orden } = req.params;
     const pool = await getPool();
@@ -1317,8 +1055,7 @@ app.post('/api/rack/:orden/salida', exigirLogin, exigirRackSql, bloquearSiSoloLe
     notificar({ tipo:'rack', area: 'papel' });
     res.json({ ok: true });
   } catch (err) {
-    console.error('[rack/salida]', err.message);
-    res.status(500).json({ error: err.message });
+    responderError(res, 'rack/salida', err);
   }
 });
 
@@ -1329,9 +1066,9 @@ app.get('/api/salud', (req, res) => res.json({ ok: true, hora: new Date().toISOS
    mensaje corto — antes caía en el manejador por defecto de Express, que
    devuelve una página HTML con el stack trace completo a quien preguntó. */
 app.use((err, req, res, next) => {
-  console.error(`[error] ${req.method} ${req.originalUrl}:`, err.message);
+  console.error(`[error] ${req.method} ${req.path}:`, err.message); // req.path: sin ?auth= en la consola
   if(res.headersSent) return next(err);
-  res.status(err.status || 500).json({ error: err.message, pendiente: !!err.pendiente });
+  res.status(err.status || err.statusCode || 500).json({ error: mensajeDeError({ ...err, message: err.message, status: err.status || err.statusCode }, req), pendiente: !!err.pendiente });
 });
 
 /* Sin decirle una dirección puntual, Node ya escucha en TODAS las
@@ -1344,9 +1081,14 @@ app.use((err, req, res, next) => {
 // los inventarios se cargan al arrancar (no con el primer pedido): si un
 // diario tiene problemas se ve ya en esta ventana, y nadie espera la carga
 Object.values(AREAS_CONFIG.areas).filter(a=>a.rack.tipo==='inventario').forEach(a=>{
-  const inv = inventarioDe(a);
+  const inv = inventario.de(a);
   console.log(`Inventario de ${a.nombre}: ${inv.version} movimiento(s) cargados.`);
 });
+if((process.env.DXF_SOURCE || 'sql').toLowerCase()==='file' && !DXF_PREFIJOS.length){
+  console.warn('⚠ DXF_ALLOWED_PREFIXES está vacío en el .env: cualquiera con permiso de Lista de corte puede pedir un .dxf de');
+  console.warn('  cualquier carpeta de red. Completalo con las carpetas donde viven los DXF (ver .env.example).');
+}
+datos.iniciarRespaldos();
 app.listen(PORT, () => {
   console.log(`Puente "Lista de corte" escuchando en http://localhost:${PORT}`);
   const ips = direccionesDeRed();

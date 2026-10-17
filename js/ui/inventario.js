@@ -373,9 +373,15 @@ function invDibujarMatriz(){
       totFila += n; totMat.set(m.id, (totMat.get(m.id)||0) + n);
       if(m.desconocido) return `<td class="invHuerfano" title="Stock de un material que no está en la lista de materiales — no se puede mover hasta configurarlo">${n}</td>`;
       // lo que ya está en el carrito para esta posición, a la vista (−4 / +10)
-      const pend = invDisponible(m.id, d) - n;
-      const marca = pend ? `<small class="cartDelta ${pend<0?'sale':'entra'}">${pend>0?'+':'−'}${Math.abs(pend)}</small>` : '';
-      return `<td class="invCell${n?' conStock':''}${invElegido(m.id, d)?' sel':''}" data-material="${m.id}" data-medida="${d}" title="${escapeHtml(m.nombre)} · ${d} mm${pend?` — en el carrito: ${pend>0?'+':''}${pend}`:''}">${n||'0'}${marca}</td>`;
+      // número grande = stock real AHORA. Si hay algo en el carrito para esta
+      // posición, abajo dice qué y cómo queda: "entra 11 → 22" / "sale 4 → 7"
+      // (antes decía solo "+11", y se leía como si ya hubiera 11 más)
+      const queda = invDisponible(m.id, d), pend = queda - n;
+      const marca = pend
+        ? `<small class="cartDelta ${pend<0?'sale':'entra'}">${pend<0?'sale':'entra'} ${Math.abs(pend)} → ${queda}</small>`
+        : '';
+      const titulo = `${m.nombre} · ${d} mm — hay ${n}` + (pend ? `; en tu carrito ${pend<0?'salen':'entran'} ${Math.abs(pend)}, quedaría ${queda} al registrar` : '');
+      return `<td class="invCell${n?' conStock':''}${pend?' pendiente':''}${invElegido(m.id, d)?' sel':''}" data-material="${m.id}" data-medida="${d}" title="${escapeHtml(titulo)}"><b>${n}</b>${marca}</td>`;
     }).join('');
     return `<tr><th scope="row" class="invEncFila" data-med="${d}" title="Elegir la medida ${d} mm">${d}<small>mm</small></th>${celdas}<td class="invTot">${totFila||''}</td></tr>`;
   }).join('');

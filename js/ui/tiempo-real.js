@@ -17,8 +17,12 @@ let trConectado = false;
 let trHuboCorte = false;
 
 function trUrl(){
+  // EventSource no puede mandar cabeceras: la sesión (y la clave del
+  // puente, si hay) van en la dirección
+  const q = ['auth='+encodeURIComponent(authToken())];
   const token = document.getElementById('ordApiToken').value.trim();
-  return ordBridgeUrl() + '/api/eventos' + (token ? '?api_token='+encodeURIComponent(token) : '');
+  if(token) q.push('api_token='+encodeURIComponent(token));
+  return ordBridgeUrl() + '/api/eventos?' + q.join('&');
 }
 function trEstado(conectado){
   trConectado = conectado;
@@ -32,7 +36,7 @@ function trEstado(conectado){
 }
 function trConectar(){
   trDesconectar();
-  if(typeof EventSource==='undefined' || document.hidden) return;
+  if(typeof EventSource==='undefined' || document.hidden || !authEstaLogueado()) return;
   try { trFuente = new EventSource(trUrl()); }
   catch(e){ trEstado(false); return; }
   trFuente.onopen = ()=>{
@@ -70,4 +74,4 @@ document.addEventListener('visibilitychange', ()=>{
 });
 // si cambian la dirección o la clave del puente, se reconecta con la nueva
 ['ordBridgeUrl','ordApiToken'].forEach(id=>document.getElementById(id).addEventListener('change', trConectar));
-trConectar();
+// la primera conexión la abre auth.js al entrar (sin sesión no hay a qué conectarse)

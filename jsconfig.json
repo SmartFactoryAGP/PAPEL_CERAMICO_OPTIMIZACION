@@ -1,0 +1,18 @@
+﻿{
+  // Para que VS Code entienda el proyecto: los .js se cargan como <script>
+  // sueltos que comparten variables globales, así que "Ir a la definición"
+  // y el autocompletado funcionan entre archivos.
+  // checkJs queda APAGADO a propósito: con este estilo de código da ~190
+  // avisos falsos (tipos que TypeScript no puede deducir). Para buscar los
+  // errores que sí rompen la app: node tools/revisar-js.js
+  "compilerOptions": {
+    "checkJs": false,
+    "allowJs": true,
+    "noEmit": true,
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "skipLibCheck": true
+  },
+  "include": ["js/**/*.js", "tools/globales.d.ts"],
+  "exclude": ["js/ui/orders-sim-data.js", "server/node_modules"]
+}

@@ -17,7 +17,22 @@ let areaActualId = (function(){
 const areaListeners = [];
 
 function areaActual(){ return AREAS_CONFIG.areas[areaActualId]; }
-function areaTieneVista(vista){ return areaActual().vistas.includes(vista); }
+/* ¿Esta vista existe en el área Y el usuario tiene permiso para verla?
+   "usuarios" es la pestaña de administración: solo administradores. */
+function areaTieneVista(vista, areaId){
+  const id = areaId || areaActualId;
+  if(vista==='usuarios') return typeof authEsAdmin==='function' && authEsAdmin();
+  if(!AREAS_CONFIG.areas[id].vistas.includes(vista)) return false;
+  return typeof authPuede!=='function' || authPuede(id, vista);
+}
+function areaVistasPermitidas(id){ return AREAS_CONFIG.areas[id].vistas.filter(v=>areaTieneVista(v, id)); }
+/* la pestaña con la que se abre un área: la primera habilitada, en este orden */
+function areaPrimeraVista(id){
+  const p = areaVistasPermitidas(id || areaActualId);
+  return ['ordenes','rack','nesting','repair'].find(v=>p.includes(v)) || (areaTieneVista('usuarios') ? 'usuarios' : null);
+}
+/* Vuelve a aplicar pestañas y botones de área con los permisos actuales. */
+function areaRefrescarPermisos(){ aplicarArea(areaActualId, {silencioso:true}); }
 function alCambiarArea(fn){ areaListeners.push(fn); }
 
 const AREA_ICONOS = {
@@ -40,13 +55,16 @@ function aplicarArea(id, opciones){
   document.querySelectorAll('[data-areas]').forEach(el=>{
     el.hidden = !el.getAttribute('data-areas').split(/\s+/).includes(id);
   });
+  // pestañas: solo las que el área tiene Y el usuario puede ver
   document.querySelectorAll('.viewTab[data-view]').forEach(tab=>{
-    tab.hidden = !area.vistas.includes(tab.getAttribute('data-view'));
+    tab.hidden = !areaTieneVista(tab.getAttribute('data-view'), id);
   });
+  // áreas: se esconden las que el usuario no puede usar en absoluto
   document.querySelectorAll('[data-area-btn]').forEach(b=>{
-    const activo = b.getAttribute('data-area-btn')===id;
+    const bid = b.getAttribute('data-area-btn'), activo = bid===id;
     b.classList.toggle('active', activo);
     b.setAttribute('aria-selected', activo ? 'true' : 'false');
+    b.hidden = typeof authEstaLogueado==='function' && authEstaLogueado() && !areaVistasPermitidas(bid).length;
   });
   document.querySelectorAll('[data-area-nombre]').forEach(el=>{ el.textContent = area.nombre; });
 
@@ -96,7 +114,7 @@ function areaRenderSelector(){
     aplicarArea(b.getAttribute('data-area-btn'));
     // si la pestaña que estaba abierta no existe en el área nueva
     // (por ej. Editor de archivos en Mallas), se va a la primera que sí
-    if(typeof switchView==='function') switchView(appVistaActual && areaTieneVista(appVistaActual) ? appVistaActual : 'rack');
+    if(typeof switchView==='function') switchView(appVistaActual && areaTieneVista(appVistaActual) ? appVistaActual : areaPrimeraVista());
   });
 }
 
