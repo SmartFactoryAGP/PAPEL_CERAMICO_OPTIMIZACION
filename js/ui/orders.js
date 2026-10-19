@@ -3,8 +3,9 @@
    el puente de /server), las nestea como un lote, y al confirmar las
    manda al Rack con una ubicación asignada. Nunca escribe/mueve nada
    en el mismo paso que nestea — primero mostrás el resultado, después
-   confirmás. La lista SOLO se actualiza cuando tocás "Actualizar" —
-   nunca sola, ni al cambiar ninguna casilla.
+   confirmás. La lista sale de la última consulta que guarda el puente
+   (una por hora a SQL, ver ordRefrescar); solo el administrador puede
+   forzarla antes.
 
    Producción: la app habla siempre con SQL real, no hay selector de
    "origen de datos" a propósito (para que nadie lo cambie sin querer).
@@ -23,20 +24,27 @@ let ordLoteEstado = new Map();     // Ordem_Serial(string) -> 'colocada' | 'sinu
 let ordSort = { campo: null, dir: -1 }; // dir -1 = de mayor a menor, 1 = de menor a mayor
 
 /* Columnas que se muestran en Lista de corte y en el Lote actual.
-   Centro_Trabalho queda afuera a propósito (pedido explícito) — sigue
-   funcionando para buscar/filtrar, solo no se dibuja como columna. */
+   Centro_Trabalho y CodMat quedan afuera a propósito (pedido explícito):
+   siguen sirviendo para filtrar, solo no se dibujan como columna. */
 const ORD_COLUMNAS = [
   {campo:'Ordem_Serial', etiqueta:'Ordem_Serial'},
   {campo:'Operation', etiqueta:'Operation'},
   {campo:'Puestodetrabajo', etiqueta:'Puestodetrabajo'},
   {campo:'ClaveModelo', etiqueta:'ClaveModelo'},
-  {campo:'CodMat', etiqueta:'CodMat'},
   {campo:'Name', etiqueta:'Name'},
   {campo:'ZTipo', etiqueta:'ZTipo'},
   {campo:'Descricao', etiqueta:'Descricao'},
   {campo:'ARCHIVO', etiqueta:'Archivo'},
 ];
-function ordColumnas(){ return ORD_COLUMNAS; }
+/* Papel cerámico suma lo que viene del BUSCARV contra Calendario: el
+   Vehículo (al lado de la orden, es lo primero que mira el operario) y lo
+   que decide si una orden entra: ZFER, PlanCURVE y NivelAGP (ver
+   server/reglas-papel.js). */
+const ORD_COLUMNAS_PAPEL = [ORD_COLUMNAS[0], {campo:'Vehiculo', etiqueta:'Vehículo'}].concat(
+  ORD_COLUMNAS.slice(1, 3),
+  [{campo:'ZFER', etiqueta:'ZFER'}, {campo:'PlanCURVE', etiqueta:'PlanCURVE'}, {campo:'NivelAGP', etiqueta:'NivelAGP'}],
+  ORD_COLUMNAS.slice(3));
+function ordColumnas(){ return areaActualId==='papel' ? ORD_COLUMNAS_PAPEL : ORD_COLUMNAS; }
 /* Mensaje de error legible de una respuesta del puente: si la consulta
    de esta área todavía no está configurada (501), lo dice tal cual. */
 async function ordErrorDeRespuesta(res){
@@ -108,18 +116,56 @@ function ordApiHeaders(extra){
   return (typeof authHeaders==='function') ? authHeaders(conApiToken) : conApiToken;
 }
 
-async function ordRefrescar(){
-  const status = document.getElementById('ordBridgeStatus');
-  document.getElementById('ordRunBtn').disabled = true;
-  document.getElementById('ordConfirmBtn').disabled = true;
+/* La Lista de corte NO se consulta a SQL cada vez: el puente guarda la
+   última lista consultada y la renueva sola cada hora (solo el
+   administrador puede forzarla antes). Esta pantalla la lee de ahí:
+   - al abrir la pestaña (si todavía no la tiene),
+   - sola, a la hora de la próxima actualización que avisa el puente,
+   - y cuando el puente avisa en vivo que la renovó (aviso "lista").
+   Nada de esto llega a SQL. */
+let ordUltimaLista = { area: null, actualizado: null };
+let ordAutoTimer = null;
+const ordHora = iso => new Date(iso).toLocaleTimeString('es-CO', {hour:'2-digit', minute:'2-digit'});
+function ordProgramarAuto(proximaIso){
+  clearTimeout(ordAutoTimer);
+  const falta = Date.parse(proximaIso) - Date.now();
+  if(isNaN(falta)) return;
+  // un poco después de vencer (y con un margen al azar, para que las 30 PCs
+  // no lleguen en el mismo segundo); nunca antes de 30 s ni después de 61 min
+  const espera = Math.min(Math.max(falta, 30000) + 5000 + Math.random()*20000, 61*60*1000);
+  ordAutoTimer = setTimeout(()=>ordRefrescar({auto:true}), espera);
+}
+/* ¿Hay que traer la lista al abrir la pestaña? (la del área actual, una vez) */
+function ordCargarSiHaceFalta(){
+  if(areaActual().listaCorte===false || !areaTieneVista('ordenes')) return;
+  if(ordUltimaLista.area !== areaActualId) ordRefrescar();
+}
 
-  status.textContent = 'Consultando...';
+async function ordRefrescar(opciones){
+  const auto = !!(opciones && opciones.auto), forzar = !!(opciones && opciones.forzar);
+  if(typeof authEstaLogueado==='function' && !authEstaLogueado()) return;
+  if(areaActual().listaCorte===false) return;
+  // no se le cambia la lista a quien está nesteando: se reintenta en 2 min
+  if(auto && typeof nestingState!=='undefined' && nestingState.running){ clearTimeout(ordAutoTimer); ordAutoTimer = setTimeout(()=>ordRefrescar({auto:true}), 120000); return; }
+  const status = document.getElementById('ordBridgeStatus');
+  const confirmAntes = document.getElementById('ordConfirmBtn').disabled;
+  if(!auto){
+    document.getElementById('ordRunBtn').disabled = true;
+    document.getElementById('ordConfirmBtn').disabled = true;
+    status.textContent = forzar ? 'Consultando SQL...' : 'Cargando la lista...';
+  }
   try {
-    const res = await fetch(ordBridgeUrl()+'/api/ordenes-pendientes', {headers: ordApiHeaders()});
+    const res = await fetch(ordBridgeUrl()+'/api/ordenes-pendientes'+(forzar ? '?forzar=1' : ''), {headers: ordApiHeaders()});
     if(!res.ok) throw await ordErrorDeRespuesta(res);
-    let pendientes = await res.json();
+    const data = await res.json();
+    ordProgramarAuto(data.proxima);
+    // automática y sin cambios: no se toca nada de la pantalla
+    if(auto && ordUltimaLista.area===areaActualId && ordUltimaLista.version===data.version) return;
+    const otraArea = ordUltimaLista.area !== areaActualId;
+    ordUltimaLista = { area: areaActualId, actualizado: data.actualizado, version: data.version };
+    let pendientes = data.ordenes || [];
     let nota = '';
-    if(ordRackEsSimulado()){
+    if(areaActual().rack.tipo==='casillas' && ordRackEsSimulado()){
       // el Rack se está simulando (archivo compartido del puente) — lo
       // que ya se confirmó ahí no tiene por qué desaparecer de tu SQL
       // real (esa tabla no se tocó), así que se saca de la vista acá
@@ -142,16 +188,26 @@ async function ordRefrescar(){
     });
     if(sacadasDelLote) nota += ` (${sacadasDelLote} se sacaron solas del lote: ya no estaban pendientes)`;
 
-    status.textContent = `Conectado — ${ordenesPendientes.length} pendiente(s)${nota}`;
+    status.textContent = `Lista de las ${ordHora(data.actualizado)} · se actualiza sola a las ${ordHora(data.proxima)}${nota}`;
+    if(data.aviso) status.textContent += ' — ⚠ ' + data.aviso;
+    if(otraArea) ordSort = { campo: null, dir: -1 };
+    ordRenderTabla();
+    ordRenderLote();
+    ordActualizarBotonEjecutar();
+    // una actualización automática no le deshace a nadie el "Ejecutar" ya
+    // hecho: si ninguna orden del lote se fue, "Confirmar" queda como estaba
+    if(auto && !sacadasDelLote && areaActual().nesting) document.getElementById('ordConfirmBtn').disabled = confirmAntes;
   } catch(e){
+    if(auto) return; // la automática falla en silencio: se sigue viendo la última lista
     status.textContent = e.pendiente
       ? e.message
       : 'No se pudo conectar al puente (¿está corriendo el servidor en tu PC?): '+e.message;
     ordenesPendientes = [];
+    ordUltimaLista = { area: null, actualizado: null };
+    ordRenderTabla();
+    ordRenderLote();
+    ordActualizarBotonEjecutar();
   }
-  ordRenderTabla();
-  ordRenderLote();
-  ordActualizarBotonEjecutar();
   await ordActualizarResumenDia();
 }
 
@@ -161,7 +217,9 @@ async function ordActualizarResumenDia(){
     const res = await fetch(ordBridgeUrl()+'/api/rack-resumen-dia', {headers: ordApiHeaders()});
     if(!res.ok) throw new Error('HTTP '+res.status);
     const r = await res.json();
-    box.textContent = `Cortadas hoy: ${r.cortadasHoy} · Sacadas hoy: ${r.sacadasHoy} · En rack ahora: ${r.enRackAhora}`;
+    box.textContent = r.entradasHoy!=null // rack por cantidad (Mallas): unidades
+      ? `Entraron hoy: ${r.entradasHoy} · Salieron hoy: ${r.salidasHoy} · En stock: ${r.enStock}`
+      : `Cortadas hoy: ${r.cortadasHoy} · Sacadas hoy: ${r.sacadasHoy} · En rack ahora: ${r.enRackAhora}`;
   } catch(e){
     box.textContent = 'No se pudo traer el resumen: '+e.message;
   }
@@ -182,7 +240,7 @@ function ordCoincideFiltro(o, filtro){
   if(txt===undefined){
     // Centro_Trabalho sigue entrando en la búsqueda aunque no se vea como
     // columna — solo se ocultó de la tabla, no del filtro.
-    const campos = [o.Ordem_Serial, o.Operation, o.Centro_Trabalho, o.Puestodetrabajo, o.ClaveModelo, o.CodMat, o.Name, o.ZTipo, o.Descricao, o.ARCHIVO];
+    const campos = [o.Ordem_Serial, o.Vehiculo, o.Operation, o.Centro_Trabalho, o.Puestodetrabajo, o.ZFER, o.PlanCURVE, o.NivelAGP, o.ClaveModelo, o.CodMat, o.Name, o.ZTipo, o.Descricao, o.ARCHIVO];
     txt = campos.map(v => String(v||'').toLowerCase()).join('\u0000');
     ordTextoBusqueda.set(o, txt);
   }
@@ -242,7 +300,21 @@ function ordCeldasHtml(o){
   }).join('\n      ');
 }
 
+/* Lo que se ve en la tabla de Lista de corte, en el mismo orden: sin las
+   que ya están en el "lote actual" (esas se ven en su tabla), con el
+   filtro del buscador y el orden de la columna elegida. Lo usan la tabla
+   y la descarga a Excel (así el Excel es exactamente lo que está en pantalla). */
+function ordFilasVisibles(){
+  const filtro = ordFiltroTexto();
+  const disponibles = ordenesPendientes.filter(o=>!ordEnLoteIds.has(String(o.Ordem_Serial)));
+  const filtradas = disponibles.filter(o=>ordCoincideFiltro(o, filtro));
+  return { disponibles, ordenadas: ordOrdenarLista(filtradas, ordSort.campo, ordSort.dir) };
+}
+
 function ordRenderTabla(){
+  // Mallas: la lista va agrupada por CodMat y puesto, y lo que se elige va
+  // a "Entrada al rack" en vez de a un lote (ver mallas.js)
+  if(areaActual().rack.porCodmat && typeof msRenderLista==='function') return msRenderLista();
   const wrap = document.getElementById('ordTableWrap');
   if(!ordenesPendientes.length){
     document.getElementById('ordCount').textContent = '0';
@@ -250,16 +322,12 @@ function ordRenderTabla(){
     return;
   }
   const filtro = ordFiltroTexto();
-  // las que ya están en el "lote actual" no se muestran acá — están
-  // abajo, en la tabla del lote.
-  const disponibles = ordenesPendientes.filter(o=>!ordEnLoteIds.has(String(o.Ordem_Serial)));
-  const filtradas = disponibles.filter(o=>ordCoincideFiltro(o, filtro));
-  const ordenadas = ordOrdenarLista(filtradas, ordSort.campo, ordSort.dir);
+  const { disponibles, ordenadas } = ordFilasVisibles();
 
-  const enLote = ordEnLoteIds.size;
-  document.getElementById('ordCount').textContent = (filtro
+  // lo que ya está en el lote se ve en la tarjeta "En el lote", al lado
+  document.getElementById('ordCount').textContent = filtro
     ? `${ordenadas.length} de ${disponibles.length}`
-    : String(disponibles.length)) + (enLote ? ` (+${enLote} en el lote)` : '');
+    : String(disponibles.length);
 
   if(!ordenadas.length){
     wrap.innerHTML = disponibles.length
@@ -268,10 +336,11 @@ function ordRenderTabla(){
     return;
   }
   const headerHtml = ordColumnas().map(ordEncabezadoOrdenable).join('');
+  // toda la fila es el botón (más rápido que apuntarle al "+ Lote")
   const rows = ordenadas.map(o=>`
-    <tr>
+    <tr class="ordFila" data-orden="${escapeHtml(o.Ordem_Serial)}" title="Tocá para pasarla al lote">
       ${ordCeldasHtml(o)}
-      <td><button class="secondary ordAddBtn" data-orden="${escapeHtml(o.Ordem_Serial)}" style="padding:4px 9px;font-size:11px;white-space:nowrap">+ Lote</button></td>
+      <td class="rowActions"><span class="ordAddBtn">+ Lote</span></td>
     </tr>`).join('');
   wrap.innerHTML = `<table class="ordTable">
     <thead><tr>${headerHtml}<th></th></tr></thead>
@@ -290,6 +359,7 @@ document.getElementById('ordBuscarInput').addEventListener('input', ()=>{
 /* Arma la tabla del "Lote actual" (las que agregaste con "+ Lote"). Si
    ya se corrió "Ejecutar", muestra si cada una quedó ubicada o no. */
 function ordRenderLote(){
+  if(areaActual().rack.porCodmat) return; // Mallas no arma lotes (ver mallas.js)
   const wrap = document.getElementById('ordLoteWrap');
   if(!ordEnLoteIds.size){
     wrap.innerHTML = '<div class="empty">Todavía no agregaste ninguna orden al lote.</div>';
@@ -297,22 +367,22 @@ function ordRenderLote(){
   }
   const indice = ordIndicePendientes();
   const filas = [...ordEnLoteIds].map(id=>indice.get(id)).filter(Boolean);
-  const headerHtml = ordColumnas().map(c=>`<th>${c.etiqueta}</th>`).join('');
+  // compacta: el lote vive en un panel angosto; el detalle completo de cada
+  // orden ya está en la Lista de corte (la descripción va en el título)
   const rows = filas.map(o=>{
     const estado = ordLoteEstado.get(String(o.Ordem_Serial));
-    const marca = estado==='colocada'
-      ? '<span style="color:var(--good,#4ade80);font-weight:700">✓ ubicada</span>'
-      : estado==='sinubicar'
-        ? '<span style="color:var(--warn,#f87171);font-weight:700">⚠ sin ubicar</span>'
-        : '<span style="color:var(--muted)">sin nestear todavía</span>';
-    return `<tr>
-      ${ordCeldasHtml(o)}
+    const marca = estado==='colocada' ? '<span class="loteEstado ok">✓ ubicada</span>'
+      : estado==='sinubicar' ? '<span class="loteEstado mal">⚠ sin ubicar</span>'
+      : '<span class="loteEstado">sin nestear</span>';
+    return `<tr title="${escapeHtml([o.ClaveModelo, o.Descricao].filter(Boolean).join(' · '))}">
+      <td>${escapeHtml(o.Ordem_Serial)}</td>
+      <td class="loteVeh">${escapeHtml(o.Vehiculo || o.ClaveModelo || '—')}</td>
       <td>${marca}</td>
-      <td><button class="secondary ordQuitarBtn" data-orden="${escapeHtml(o.Ordem_Serial)}" style="padding:4px 9px;font-size:11px;white-space:nowrap">✕ Quitar</button></td>
+      <td class="rowActions"><button class="cartRm ordQuitarBtn" data-orden="${escapeHtml(o.Ordem_Serial)}" aria-label="Quitar del lote" title="Quitar del lote (vuelve a la lista)">✕</button></td>
     </tr>`;
   }).join('');
-  wrap.innerHTML = `<table class="ordTable">
-    <thead><tr>${headerHtml}<th>Estado</th><th></th></tr></thead>
+  wrap.innerHTML = `<table class="ordTable loteTabla">
+    <thead><tr><th>Orden</th><th>Vehículo</th><th>Estado</th><th></th></tr></thead>
     <tbody>${rows}</tbody>
   </table>`;
 }
@@ -320,6 +390,7 @@ function ordRenderLote(){
 function ordActualizarBotonEjecutar(){
   document.getElementById('ordRunBtn').disabled = ordEnLoteIds.size===0;
   document.getElementById('ordLoteCount').textContent = String(ordEnLoteIds.size);
+  document.getElementById('ordLoteCountChip').textContent = String(ordEnLoteIds.size);
   // un área sin nesting (Mallas) confirma el lote directo al Rack: el
   // botón se habilita apenas hay algo en el lote, sin "Ejecutar" previo
   if(!areaActual().nesting) document.getElementById('ordConfirmBtn').disabled = ordEnLoteIds.size===0;
@@ -354,8 +425,8 @@ document.getElementById('ordStagePanel').addEventListener('click', (ev)=>{
     ordRenderTabla();
     return;
   }
-  const addBtn = ev.target.closest('.ordAddBtn');
-  if(addBtn){ ordAgregarALote(addBtn.getAttribute('data-orden')); return; }
+  const fila = ev.target.closest('#ordTableWrap tr.ordFila');
+  if(fila){ ordAgregarALote(fila.getAttribute('data-orden')); return; }
   const quitBtn = ev.target.closest('.ordQuitarBtn');
   if(quitBtn){ ordQuitarDelLote(quitBtn.getAttribute('data-orden')); return; }
 });
@@ -397,19 +468,22 @@ function ordParsearListaOrdenes(texto){
     .filter(t=>t.length>0);
 }
 /* Busca una orden puntual en el puente cuando no está en la lista ya
-   cargada. Devuelve el objeto de la orden si la encuentra (y la deja
-   agregada a ordenesPendientes de paso), o null si no existe con
-   Operation='0132' o si el puente no responde. */
+   cargada. Devuelve {orden} si la encuentra (y la deja agregada a
+   ordenesPendientes de paso), {bloqueada:motivo} si existe pero en papel
+   no cumple CURVE / NivelAGP / ZFER aprobado, o {} si no existe con
+   Operation='0132' o el puente no responde. */
 async function ordBuscarOrdenSuelta(serial){
   try {
     const res = await fetch(ordBridgeUrl()+'/api/ordenes-pendientes/'+encodeURIComponent(serial), {headers: ordApiHeaders()});
     const data = await res.json().catch(()=>({}));
-    if(!res.ok || !data.encontrada || !data.orden) return null;
+    if(!res.ok){ return data.error ? { bloqueada: data.error } : {}; }
+    if(!data.encontrada || !data.orden) return {};
+    if(data.bloqueada) return { bloqueada: data.motivo || 'no cumple las condiciones de Lista de corte' };
     // por si dos búsquedas sueltas se pisan, no la agrega dos veces
     ordAgregarPendiente(data.orden);
-    return data.orden;
+    return { orden: data.orden };
   } catch(e){
-    return null;
+    return {};
   }
 }
 async function ordIngresoRapidoAlLote(){
@@ -423,10 +497,14 @@ async function ordIngresoRapidoAlLote(){
   resultado.textContent = tokens.length===1 ? `Buscando la orden ${tokens[0]}...` : 'Buscando...';
 
   let agregadas = 0, yaEstaban = 0;
-  const noEncontradas = [];
+  const noEncontradas = [], bloqueadas = []; // bloqueadas: [número, motivo]
   for(const tok of tokens){
     let orden = ordIndicePendientes().get(tok);
-    if(!orden) orden = await ordBuscarOrdenSuelta(tok); // no está en la lista ya cargada: buscala puntual
+    if(!orden){ // no está en la lista ya cargada: buscala puntual
+      const r = await ordBuscarOrdenSuelta(tok);
+      if(r.bloqueada){ bloqueadas.push([tok, r.bloqueada]); continue; }
+      orden = r.orden;
+    }
     if(!orden){ noEncontradas.push(tok); continue; }
     const serial = String(orden.Ordem_Serial);
     if(ordEnLoteIds.has(serial)){ yaEstaban++; continue; }
@@ -438,6 +516,11 @@ async function ordIngresoRapidoAlLote(){
   ordActualizarBotonEjecutar();
 
   const tok0 = escapeHtml(tokens[0]);
+  if(tokens.length===1 && bloqueadas.length){
+    resultado.innerHTML = `⛔ orden <b>${tok0}</b> no puede entrar: ${escapeHtml(bloqueadas[0][1])}`;
+    resultado.style.color = 'var(--warn, #f87171)';
+    return;
+  }
   if(tokens.length===1 && !noEncontradas.length && !yaEstaban){
     resultado.innerHTML = `✓ orden <b>${tok0}</b> agregada al lote`;
     resultado.style.color = 'var(--good, #4ade80)';
@@ -458,8 +541,9 @@ async function ordIngresoRapidoAlLote(){
   partes.push(`${agregadas} agregada${agregadas===1?'':'s'} al lote`);
   if(yaEstaban) partes.push(`${yaEstaban} ya estaba${yaEstaban===1?'':'n'} en el lote`);
   if(noEncontradas.length) partes.push(`${noEncontradas.length} no se encontró${noEncontradas.length===1?'':'aron'}: ${escapeHtml(noEncontradas.join(', '))}`);
+  if(bloqueadas.length) partes.push(`${bloqueadas.length} bloqueada${bloqueadas.length===1?'':'s'}: ${bloqueadas.map(([n, m])=>`<b>${escapeHtml(n)}</b> (${escapeHtml(m)})`).join(', ')}`);
   resultado.innerHTML = partes.join(' — ');
-  resultado.style.color = noEncontradas.length ? 'var(--warn, #f87171)' : 'var(--good, #4ade80)';
+  resultado.style.color = (noEncontradas.length || bloqueadas.length) ? 'var(--warn, #f87171)' : 'var(--good, #4ade80)';
 }
 document.getElementById('ordIngresoRapidoInput').addEventListener('keydown', ev=>{
   if(ev.key==='Enter'){ ev.preventDefault(); ordIngresoRapidoAlLote(); }
@@ -481,7 +565,9 @@ async function ordBuscarOrdenesDeLote(codigo){
     const res = await fetch(ordBridgeUrl()+'/api/lote/'+encodeURIComponent(codigo), {headers: ordApiHeaders()});
     const data = await res.json().catch(()=>null);
     if(!res.ok) return { error: (data && data.error) || ('HTTP '+res.status) };
-    return { ordenes: Array.isArray(data) ? data : [] };
+    // {ordenes, bloqueadas}: en papel, las que no cumplen CURVE / NivelAGP /
+    // ZFER aprobado vienen aparte, con el motivo
+    return { ordenes: (data && data.ordenes) || [], bloqueadas: (data && data.bloqueadas) || [] };
   } catch(e){
     return { error: 'no se pudo consultar el puente' };
   }
@@ -495,9 +581,18 @@ async function ordAgregarPorCodigoLote(){
   if(!codigo) return;
 
   resultado.textContent = `Buscando el lote ${codigo}...`;
-  const { ordenes, error } = await ordBuscarOrdenesDeLote(codigo);
+  const { ordenes, bloqueadas, error } = await ordBuscarOrdenesDeLote(codigo);
   if(error){
     resultado.innerHTML = `⚠ no se pudo traer el lote <b>${escapeHtml(codigo)}</b>: ${escapeHtml(error)}`;
+    resultado.style.color = 'var(--warn, #f87171)';
+    return;
+  }
+  // las que no cumplen las condiciones de papel: se dice cuáles y por qué
+  const bloqueadasHtml = bloqueadas.length
+    ? ` — ⛔ ${bloqueadas.length} bloqueada${bloqueadas.length===1?'':'s'}: ` + bloqueadas.slice(0, 8).map(b=>`<b>${escapeHtml(b.Ordem_Serial)}</b> (${escapeHtml(b.motivo)})`).join(', ') + (bloqueadas.length>8 ? '…' : '')
+    : '';
+  if(!ordenes.length && bloqueadas.length){
+    resultado.innerHTML = `Ninguna orden del lote <b>${escapeHtml(codigo)}</b> puede entrar${bloqueadasHtml}`;
     resultado.style.color = 'var(--warn, #f87171)';
     return;
   }
@@ -524,14 +619,38 @@ async function ordAgregarPorCodigoLote(){
   const partes = [`lote ${codigo}: ${ordenes.length} orden(es) encontrada(s)`];
   partes.push(`${agregadas} agregada${agregadas===1?'':'s'} al lote actual`);
   if(yaEstaban) partes.push(`${yaEstaban} ya estaba${yaEstaban===1?'':'n'} en el lote`);
-  resultado.textContent = partes.join(' — ');
-  resultado.style.color = agregadas ? 'var(--good, #4ade80)' : 'var(--muted)';
+  resultado.innerHTML = escapeHtml(partes.join(' — ')) + bloqueadasHtml;
+  resultado.style.color = bloqueadas.length ? 'var(--warn, #f87171)' : agregadas ? 'var(--good, #4ade80)' : 'var(--muted)';
 }
 document.getElementById('ordCodigoLoteInput').addEventListener('keydown', ev=>{
   if(ev.key==='Enter'){ ev.preventDefault(); ordAgregarPorCodigoLote(); }
 });
 
-document.getElementById('ordRefreshBtn').addEventListener('click', ordRefrescar);
+/* Descarga a Excel EXACTAMENTE lo que está en la tabla: mismas columnas,
+   mismo filtro del buscador y mismo orden (ver js/export/excel.js). */
+async function ordDescargarExcel(){
+  const area = areaActual(), btn = document.getElementById('ordExcelBtn');
+  let columnas, filas;
+  if(area.rack.porCodmat){
+    // + "Grupo" (Liberadas / En planeación), que en pantalla va como encabezado de cada grupo
+    columnas = [{campo:'Grupo', etiqueta:'Grupo'}, ...MS_COLUMNAS].map(c=>({ ...c, numero: ['Cantidad', 'Cubierto', 'Falta'].includes(c.campo) }));
+    filas = msFilasVisibles().map(f=>columnas.map(c=>f[c.campo]));
+  } else {
+    columnas = ordColumnas();
+    filas = ordFilasVisibles().ordenadas.map(o=>columnas.map(c=>o[c.campo]==null ? '' : o[c.campo]));
+  }
+  if(!filas.length){ alert('La tabla está vacía: no hay nada para descargar (revisá el filtro).'); return; }
+  const d = new Date(), dos = n => String(n).padStart(2, '0');
+  const sello = `${d.getFullYear()}-${dos(d.getMonth()+1)}-${dos(d.getDate())}_${dos(d.getHours())}${dos(d.getMinutes())}`;
+  btn.disabled = true;
+  try { await descargarExcel(`lista-de-corte_${area.id}_${sello}.xlsx`, `Lista de corte ${area.nombre}`, columnas, filas); }
+  catch(e){ alert('No se pudo armar el Excel: ' + e.message); }
+  finally { btn.disabled = false; }
+}
+document.getElementById('ordExcelBtn').addEventListener('click', ordDescargarExcel);
+
+// solo lo ve el administrador (data-solo-admin): consulta SQL ya, sin esperar la hora
+document.getElementById('ordRefreshBtn').addEventListener('click', ()=>ordRefrescar({forzar:true}));
 
 /* Trae los DXF de las órdenes seleccionadas (del mock embebido si estás
    en modo simulado, o del puente real si no), las arma como piezas
@@ -854,8 +973,8 @@ async function rackReingresar(ordenSerial, ubicacion){
    pestaña o después de una acción propia) se comporta igual que
    siempre. */
 async function rackRender(silencioso){
-  // Tecoflex: el rack es un inventario por material y medida (inventario.js)
-  if(areaActual().rack.tipo==='inventario') return invRender(silencioso);
+  // Tecoflex: inventario por material y medida (inventario.js); Mallas: stock por CodMat (mallas.js)
+  if(areaActual().rack.tipo==='inventario') return areaActual().rack.porCodmat ? msRackRender(silencioso) : invRender(silencioso);
   const wrap = document.getElementById('rackWrap');
   const sim = ordRackEsSimulado();
   const areaPedida = areaActualId;
@@ -934,6 +1053,8 @@ function rackActualizarCapacidad(){
    así que se limpia (nada se mezcla) y se vuelve a pedir lo nuevo. */
 alCambiarArea(()=>{
   ordenesPendientes = [];
+  ordUltimaLista = { area: null, actualizado: null }; // la del área nueva se trae al abrir la pestaña
+  clearTimeout(ordAutoTimer);
   ordEnLoteIds.clear();
   ordLoteEstado.clear();
   ordLote = [];
@@ -945,7 +1066,7 @@ alCambiarArea(()=>{
   document.getElementById('ordResumenDia').textContent = '—';
   document.getElementById('ordConfirmBtn').disabled = true;
   const res = document.getElementById('rackBuscarResultado'); res.style.display = 'none';
-  document.getElementById('ordTableWrap').innerHTML = '<div class="empty">Tocá "Actualizar lista de pendientes" para traer las órdenes.</div>';
+  document.getElementById('ordTableWrap').innerHTML = '<div class="empty">Cargando la lista…</div>';
   ordRenderLote();
   ordActualizarBotonEjecutar();
   rackActualizarCapacidad();

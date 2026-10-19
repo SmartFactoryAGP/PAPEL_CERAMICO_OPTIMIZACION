@@ -48,11 +48,11 @@ prueba('Seguridad del puente', async limpiar=>{
   await sleep(300); assert.ok(oAdm.abierto && oMallas.abierto && oOp.abierto);
   const mov = await api(p.url, 'POST', '/api/inventario/movimientos', { token: adm, area: 'tecoflex', cuerpo: { items: [{ tipo: 'entrada', material: '100003239', medida: '9', cantidad: 5 }] } });
   assert.strictEqual(mov.s, 200);
-  await api(p.url, 'POST', '/api/rack-simulado/agregar', { token: adm, area: 'mallas', cuerpo: { Ordem_Serial: 'M1' } });
+  await api(p.url, 'POST', '/api/inventario/movimientos', { token: adm, area: 'mallas', cuerpo: { items: [{ tipo: 'entrada', material: '600019608', cantidad: 2 }] } });
   await sleep(300);
   const tipos = o => o.eventos.map(e=>`${e.tipo}:${e.area}`).sort().join(',');
-  assert.strictEqual(tipos(oAdm), 'inventario:tecoflex,rack:mallas');
-  assert.strictEqual(tipos(oMallas), 'rack:mallas', 'Mallas no tiene que ver el inventario de Tecoflex');
+  assert.strictEqual(tipos(oAdm), 'inventario:mallas,inventario:tecoflex,lista:mallas');
+  assert.strictEqual(tipos(oMallas), 'inventario:mallas,lista:mallas', 'Mallas no tiene que ver el inventario de Tecoflex');
   assert.strictEqual(tipos(oOp), 'inventario:tecoflex', 'Tecoflex no tiene que ver el rack de Mallas');
   ok('avisos en vivo filtrados por permiso: Mallas no ve el stock de Tecoflex, y al revés');
 
@@ -64,7 +64,7 @@ prueba('Seguridad del puente', async limpiar=>{
   assert.ok(oOp.cerrado, 'un usuario desactivado seguía recibiendo datos en vivo');
   assert.ok(!oAdm.cerrado);
   const n = oMallas.eventos.length;
-  await api(p.url, 'POST', '/api/rack-simulado/agregar', { token: adm, area: 'mallas', cuerpo: { Ordem_Serial: 'M2' } });
+  await api(p.url, 'POST', '/api/inventario/movimientos', { token: adm, area: 'mallas', cuerpo: { items: [{ tipo: 'entrada', material: '600019608', cantidad: 2 }] } });
   await sleep(200); assert.strictEqual(oMallas.eventos.length, n);
   ok('"Salir" y "desactivar usuario" cortan al instante la conexión en vivo');
 

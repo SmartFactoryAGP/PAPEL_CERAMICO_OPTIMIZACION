@@ -5,8 +5,9 @@
        usuarios.json                 usuarios, contraseñas (cifradas) y permisos
        papel/rack.json               órdenes en el rack de papel cerámico (A1…G20)
        papel/historial.json          entradas / salidas / reentradas de ese rack
-       mallas/rack.json              ídem, rack de mallas
-       mallas/historial.json
+       papel/aprobaciones.json       ZFER aprobados (CURVE 02–04 que llevan papel)
+       mallas/movimientos.jsonl      diario de entradas y salidas por CodMat (fuente de verdad)
+       mallas/inventario.json        foto legible del stock de mallas
        tecoflex/movimientos.jsonl    diario de entradas y salidas (fuente de verdad)
        tecoflex/inventario.json      foto legible del stock actual
        respaldos/AAAA-MM-DD/…        copia diaria automática (se guardan 30 días)
@@ -34,6 +35,7 @@ const rutas = {
   usuarios:    ()     => path.join(DATOS, 'usuarios.json'),
   rack:        areaId => path.join(carpetaArea(areaId), 'rack.json'),
   historial:   areaId => path.join(carpetaArea(areaId), 'historial.json'),
+  aprobaciones: areaId => path.join(carpetaArea(areaId), 'aprobaciones.json'), // ZFER aprobados para Lista de corte (papel)
   diario:      areaId => path.join(carpetaArea(areaId), 'movimientos.jsonl'),
   inventario:  areaId => path.join(carpetaArea(areaId), 'inventario.json'),
   diarioViejo: areaId => path.join(carpetaArea(areaId), 'movimientos.json'), // formato anterior (arreglo); se convierte solo

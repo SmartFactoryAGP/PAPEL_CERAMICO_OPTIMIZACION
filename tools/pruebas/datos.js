@@ -32,12 +32,13 @@ prueba('Datos: una carpeta por rack, migración y respaldo', async limpiar=>{
   assert.ok(fs.existsSync(path.join(datos, 'respaldos', hoy[0], 'papel', 'rack.json')));
   ok(`respaldo del día creado (respaldos/${hoy[0]})`);
 
-  // racks independientes: mover algo en mallas no toca papel (ni su historial)
+  // racks independientes: dar entrada en mallas (stock por CodMat) no toca papel (ni su historial)
   const t = await login(p.url, 'Hfrodriguez', 'admin123');
-  await api(p.url, 'POST', '/api/rack-simulado/agregar', { token: t, area: 'mallas', cuerpo: { Ordem_Serial: 'M2' } });
+  const ent = await api(p.url, 'POST', '/api/inventario/movimientos', { token: t, area: 'mallas', cuerpo: { items: [{ tipo: 'entrada', material: '000000000600019608', descripcion: 'MTNTF0036', cantidad: 3 }] } });
+  assert.strictEqual(ent.s, 200, JSON.stringify(ent.d));
   assert.deepStrictEqual(leer('papel/rack.json').map(o=>o.Ordem_Serial), ['P1']);
   assert.strictEqual(leer('papel/historial.json').length, 2);
-  assert.strictEqual(leer('mallas/historial.json').length, 2);
+  assert.strictEqual(fs.readFileSync(path.join(datos, 'mallas', 'movimientos.jsonl'), 'utf8').trim().split('\n').length, 1);
   // el stock viejo de Tecoflex (clave 'pu') se ve como el PU actual
   const inv = await api(p.url, 'GET', '/api/inventario', { token: t, area: 'tecoflex' });
   assert.deepStrictEqual(inv.d.stock, [{ material: '100005343', medida: '20', cantidad: 9 }]);
@@ -46,6 +47,7 @@ prueba('Datos: una carpeta por rack, migración y respaldo', async limpiar=>{
   // segundo arranque: la migración no hace nada de nuevo
   await p.reiniciar();
   assert.ok(!p.log().includes('migración'));
-  assert.deepStrictEqual(leer('mallas/rack.json').map(o=>o.Ordem_Serial), ['M1', 'M2']);
-  ok('reiniciar no vuelve a migrar ni pierde nada');
+  const mallas = await api(p.url, 'GET', '/api/inventario', { token: await login(p.url, 'Hfrodriguez', 'admin123'), area: 'mallas' });
+  assert.deepStrictEqual(mallas.d.stock, [{ material: '600019608', medida: '', cantidad: 3, nombre: 'MTNTF0036' }]); // sin los 9 ceros
+  ok('reiniciar no vuelve a migrar ni pierde nada (el stock de mallas sigue: 3 de 600019608)');
 });

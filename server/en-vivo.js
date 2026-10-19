@@ -20,7 +20,8 @@ const MAX_CONEXIONES = 1000;
 const MAX_POR_SESION = 50;
 // qué vistas alcanzan para recibir cada tipo de aviso (las mismas que
 // piden los endpoints que esos avisos mandan a refrescar)
-const VISTAS_DEL_AVISO = { inventario: ['rack'], rack: ['rack', 'ordenes'] };
+const VISTAS_DEL_AVISO = { inventario: ['rack'], rack: ['rack', 'ordenes'], aprobaciones: ['aprobaciones', 'aprobar'],
+  lista: ['ordenes', 'aprobaciones', 'aprobar'] }; // lista: se renovó la Lista de corte (las pantallas la releen de la memoria del puente, no de SQL)
 
 function crear(usuarios){
   const clientes = new Map(); // res -> token

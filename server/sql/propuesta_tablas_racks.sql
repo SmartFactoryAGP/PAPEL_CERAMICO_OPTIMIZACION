@@ -29,7 +29,7 @@ CREATE TABLE rack.Usuarios (
 CREATE TABLE rack.Permisos (
   Usuario        NVARCHAR(40)  NOT NULL REFERENCES rack.Usuarios(Usuario) ON DELETE CASCADE,
   Area           VARCHAR(20)   NOT NULL,           -- papel | tecoflex | mallas
-  Vista          VARCHAR(20)   NOT NULL,           -- ordenes | nesting | rack | repair
+  Vista          VARCHAR(20)   NOT NULL,           -- ordenes | nesting | rack | repair | aprobaciones | aprobar
   PRIMARY KEY (Usuario, Area, Vista)
 );
 
@@ -51,23 +51,84 @@ CREATE TABLE rack.PapelHistorial (
 );
 CREATE INDEX IX_PapelHistorial_Orden ON rack.PapelHistorial(OrdenSerial, Fecha);
 
-/* ---------- Rack de MALLAS (misma forma, tablas propias) ---------- */
-CREATE TABLE rack.MallasRack (
-  OrdenSerial    VARCHAR(50)   NOT NULL PRIMARY KEY,
-  Ubicacion      VARCHAR(10)   NOT NULL UNIQUE,
-  DatosOrden     NVARCHAR(MAX) NULL,
-  Ingreso        DATETIME2     NOT NULL DEFAULT SYSDATETIME(),
-  Usuario        NVARCHAR(40)  NULL
+/* Aprobación de ZFER: piezas CURVE de nivel 02–04 que llevan papel.
+   Aprobado = todas las órdenes de ese ZFER entran a Lista de corte. */
+CREATE TABLE rack.PapelAprobacionesZfer (
+  Zfer           VARCHAR(40)   NOT NULL PRIMARY KEY,
+  Estado         VARCHAR(10)   NOT NULL CHECK (Estado IN ('pendiente','aprobada','rechazada')),
+  SolicitadoPor  NVARCHAR(40)  NULL,
+  SolicitadoEn   DATETIME2     NOT NULL,
+  Nota           NVARCHAR(300) NULL,               -- por qué lleva papel (lo escribe el operario)
+  Detalle        NVARCHAR(MAX) NULL,               -- órdenes, niveles y modelos al pedirla (JSON)
+  ResueltoPor    NVARCHAR(40)  NULL,
+  ResueltoEn     DATETIME2     NULL,
+  Motivo         NVARCHAR(300) NULL                -- motivo del rechazo o de quitar la aprobación
 );
-CREATE TABLE rack.MallasHistorial (
+CREATE TABLE rack.PapelAprobacionesZferHistorial (  -- cada pedido, aprobación, rechazo o revocación
   Id             BIGINT IDENTITY PRIMARY KEY,
-  OrdenSerial    VARCHAR(50)   NOT NULL,
-  Ubicacion      VARCHAR(10)   NULL,
-  Evento         VARCHAR(12)   NOT NULL,
+  Zfer           VARCHAR(40)   NOT NULL,
+  Evento         VARCHAR(12)   NOT NULL,           -- solicitada | aprobada | rechazada | revocada
   Usuario        NVARCHAR(40)  NULL,
+  Fecha          DATETIME2     NOT NULL DEFAULT SYSDATETIME(),
+  Nota           NVARCHAR(300) NULL
+);
+CREATE INDEX IX_PapelAprobacionesZferHistorial_Zfer ON rack.PapelAprobacionesZferHistorial(Zfer, Fecha);
+
+/* ---------- Stock de MALLAS (por Desenho_CodMat, en unidades) ----------
+   No va por orden ni por casilla: se da entrada a lo fabricado (un sticker
+   por malla) y salida a lo que se usa. El stock descuenta la necesidad de
+   Lista de corte. CodMat sin los 9 ceros iniciales de SAP. */
+CREATE TABLE rack.MallasStock (
+  CodMat         VARCHAR(18)   NOT NULL PRIMARY KEY,
+  Descripcion    NVARCHAR(120) NULL,
+  Cantidad       INT           NOT NULL CHECK (Cantidad >= 0)
+);
+CREATE TABLE rack.MallasMovimientos (               -- un registro por cada entrada o salida registrada
+  Id             BIGINT IDENTITY PRIMARY KEY,
+  IdOrigen       VARCHAR(20)   NULL,
+  IdCliente      VARCHAR(64)   NULL,               -- contra registros duplicados (doble clic, reintento)
+  Usuario        NVARCHAR(40)  NULL,
+  Nota           NVARCHAR(200) NULL,
   Fecha          DATETIME2     NOT NULL DEFAULT SYSDATETIME()
 );
-CREATE INDEX IX_MallasHistorial_Orden ON rack.MallasHistorial(OrdenSerial, Fecha);
+CREATE UNIQUE INDEX UX_MallasMovimientos_IdCliente ON rack.MallasMovimientos(IdCliente) WHERE IdCliente IS NOT NULL;
+CREATE TABLE rack.MallasMovimientoLineas (
+  MovimientoId   BIGINT        NOT NULL REFERENCES rack.MallasMovimientos(Id),
+  Linea          INT           NOT NULL,
+  Tipo           VARCHAR(8)    NOT NULL CHECK (Tipo IN ('entrada','salida')),
+  CodMat         VARCHAR(18)   NOT NULL,
+  Descripcion    NVARCHAR(120) NULL,
+  Cantidad       INT           NOT NULL CHECK (Cantidad > 0),
+  PRIMARY KEY (MovimientoId, Linea)
+);
+
+/* ---------- Stock de TEJIDOS (PVTE, PUTE, tejido — igual que Mallas, tablas propias) ----------
+   No va por orden ni por casilla: se da entrada a lo fabricado (un sticker
+   por tejido) y salida a lo que se usa. El stock descuenta la necesidad de
+   Lista de corte. CodMat sin los 9 ceros iniciales de SAP. */
+CREATE TABLE rack.TejidosStock (
+  CodMat         VARCHAR(18)   NOT NULL PRIMARY KEY,
+  Descripcion    NVARCHAR(120) NULL,
+  Cantidad       INT           NOT NULL CHECK (Cantidad >= 0)
+);
+CREATE TABLE rack.TejidosMovimientos (               -- un registro por cada entrada o salida registrada
+  Id             BIGINT IDENTITY PRIMARY KEY,
+  IdOrigen       VARCHAR(20)   NULL,
+  IdCliente      VARCHAR(64)   NULL,               -- contra registros duplicados (doble clic, reintento)
+  Usuario        NVARCHAR(40)  NULL,
+  Nota           NVARCHAR(200) NULL,
+  Fecha          DATETIME2     NOT NULL DEFAULT SYSDATETIME()
+);
+CREATE UNIQUE INDEX UX_TejidosMovimientos_IdCliente ON rack.TejidosMovimientos(IdCliente) WHERE IdCliente IS NOT NULL;
+CREATE TABLE rack.TejidosMovimientoLineas (
+  MovimientoId   BIGINT        NOT NULL REFERENCES rack.TejidosMovimientos(Id),
+  Linea          INT           NOT NULL,
+  Tipo           VARCHAR(8)    NOT NULL CHECK (Tipo IN ('entrada','salida')),
+  CodMat         VARCHAR(18)   NOT NULL,
+  Descripcion    NVARCHAR(120) NULL,
+  Cantidad       INT           NOT NULL CHECK (Cantidad > 0),
+  PRIMARY KEY (MovimientoId, Linea)
+);
 
 /* ---------- Inventario de TECOFLEX (por cantidad: material + medida) ---------- */
 CREATE TABLE rack.TecoflexStock (

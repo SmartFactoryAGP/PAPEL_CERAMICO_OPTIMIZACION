@@ -1,5 +1,5 @@
-const APP_VISTAS = {nesting:'viewNesting', repair:'viewRepair', ordenes:'viewOrdenes', rack:'viewRack', usuarios:'viewUsuarios'};
-const APP_TABS   = {nesting:'tabNesting', repair:'tabRepair', ordenes:'tabOrdenes', rack:'tabRack', usuarios:'tabUsuarios'};
+const APP_VISTAS = {nesting:'viewNesting', repair:'viewRepair', ordenes:'viewOrdenes', rack:'viewRack', aprobaciones:'viewAprobaciones', usuarios:'viewUsuarios'};
+const APP_TABS   = {nesting:'tabNesting', repair:'tabRepair', ordenes:'tabOrdenes', rack:'tabRack', aprobaciones:'tabAprobaciones', usuarios:'tabUsuarios'};
 let appVistaActual = null;
 
 function switchView(view){
@@ -26,6 +26,14 @@ function switchView(view){
   if(view==='rack'){ if(typeof rackIniciarPolling==='function') rackIniciarPolling(); }
   else { if(typeof rackDetenerPolling==='function') rackDetenerPolling(); }
   if(view==='usuarios' && typeof usrCargar==='function') usrCargar();
+  if(view==='aprobaciones' && typeof apCargar==='function') apCargar();
+  // Lista de corte: se trae sola (de la última consulta guardada en el puente, no de SQL)
+  if(view==='ordenes' && typeof ordCargarSiHaceFalta==='function') ordCargarSiHaceFalta();
+  // y el cursor queda listo en "Agregar orden" para escanear sin tocar el mouse
+  if(view==='ordenes' && cambio){
+    const i = document.getElementById('ordIngresoRapidoInput');
+    if(i) setTimeout(()=>i.focus({preventScroll:true}), 60);
+  }
 }
 /* Pantalla de ingreso (login + área) vs. la app en sí. */
 function appMostrarApp(vista){
@@ -45,6 +53,7 @@ document.getElementById('tabRepair').addEventListener('click', ()=>switchView('r
 document.getElementById('tabOrdenes').addEventListener('click', ()=>switchView('ordenes'));
 document.getElementById('tabRack').addEventListener('click', ()=>{ switchView('rack'); if(typeof rackRender==='function') rackRender(); });
 document.getElementById('tabUsuarios').addEventListener('click', ()=>switchView('usuarios'));
+document.getElementById('tabAprobaciones').addEventListener('click', ()=>switchView('aprobaciones'));
 
 // arranque: con sesión guardada se confirma con el puente (por si vencio o
 // cambiaron los permisos) y se entra; si no, la pantalla de ingreso

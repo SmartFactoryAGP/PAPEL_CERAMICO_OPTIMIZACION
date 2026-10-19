@@ -16,6 +16,8 @@
                    material es la llave con que se guarda el stock en el
                    puente, así que NO se cambia una vez en uso (el nombre
                    sí se puede corregir sin perder nada).
+                   Con porCodmat (Mallas): el stock es por Desenho_CodMat,
+                   sin medidas ni lista fija de materiales.
    ========================================================= */
 (function(){
   // medidas generales de Tecoflex: de 9 a 70 mm
@@ -23,14 +25,17 @@
   for(let mm=9; mm<=70; mm++) medidas9a70.push(String(mm));
 
   const AREAS_CONFIG = {
-    orden: ['papel', 'tecoflex', 'mallas'],
+    orden: ['papel', 'tecoflex', 'mallas', 'tejidos'],
     porDefecto: 'papel',
     areas: {
       papel: {
         id: 'papel',
         nombre: 'Papel cerámico',
         resumen: 'Nesting de DXF, rack A1–G20 y editor de archivos',
-        vistas: ['ordenes', 'nesting', 'rack', 'repair'],
+        // 'aprobaciones': pestaña para pedir que un ZFER CURVE 02–04 lleve papel.
+        // 'aprobar': no es una pestaña, es el permiso de aprobar o rechazar esos pedidos.
+        vistas: ['ordenes', 'nesting', 'rack', 'repair', 'aprobaciones', 'aprobar'],
+        aprobacionZfer: true,
         nesting: true,
         stickers: true,
         rackSql: true, // es la única con tabla de control en SQL (NestingControlCorte)
@@ -63,12 +68,30 @@
       mallas: {
         id: 'mallas',
         nombre: 'Mallas',
-        resumen: 'Lista de corte y rack, sin nesting',
+        resumen: 'Qué fabricar por CodMat y stock con sticker por malla',
         vistas: ['ordenes', 'rack'],
         nesting: false,
         stickers: true,
         rackSql: false,
-        rack: { tipo: 'casillas', letras: ['A','B','C','D','E','F','G'], porLetra: 20 }
+        // stock por Desenho_CodMat (sale de SAGA, sin lista fija) en vez de
+        // una orden por casilla: se da entrada a lo fabricado (un sticker por
+        // malla) y el stock se descuenta de la necesidad de Lista de corte
+        rack: { tipo: 'inventario', porCodmat: true },
+        pieza: { una: 'malla', varias: 'mallas' }   // cómo se nombra cada unidad en pantalla
+      },
+      // Tejidos: igual que Mallas (stock por CodMat, sticker por unidad,
+      // necesidad por puesto); cambia qué materiales trae la consulta de SAGA
+      // (PVTE, PUTE o "tejido" en la descripción, ver server/queries.js)
+      tejidos: {
+        id: 'tejidos',
+        nombre: 'Tejidos',
+        resumen: 'PVTE, PUTE y tejidos por CodMat, con sticker por tejido',
+        vistas: ['ordenes', 'rack'],
+        nesting: false,
+        stickers: true,
+        rackSql: false,
+        rack: { tipo: 'inventario', porCodmat: true },
+        pieza: { una: 'tejido', varias: 'tejidos' }
       }
     }
   };

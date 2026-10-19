@@ -16,12 +16,16 @@ La app **no modifica ninguna tabla de SAP/SAGA ni de Calendario**.
 ```
 server/datos/
 ├── usuarios.json              usuarios, contraseñas (cifradas) y permisos
+├── papel/aprobaciones.json    ZFER CURVE 02–04 aprobados para Lista de corte, con quién pidió, quién aprobó y cuándo
 ├── papel/
 │   ├── rack.json              órdenes que están hoy en el rack (A1 … G20)
 │   └── historial.json         cada entrada, salida y reentrada, con usuario y hora
 ├── mallas/
-│   ├── rack.json
-│   └── historial.json
+│   ├── movimientos.jsonl      diario de entradas y salidas por CodMat (fuente de verdad)
+│   └── inventario.json        stock actual por CodMat
+├── tejidos/                  igual que mallas (PVTE, PUTE, tejido), stock propio
+│   ├── movimientos.jsonl
+│   └── inventario.json
 ├── tecoflex/
 │   ├── movimientos.jsonl      diario de entradas y salidas (fuente de verdad)
 │   └── inventario.json        stock actual por material y medida
@@ -31,8 +35,9 @@ server/datos/
 
 - **Independientes:** cada rack tiene su propia carpeta. Un problema en uno (archivo dañado, restauración) no afecta a los otros.
 - **Cómo se guarda:**
-  - Papel cerámico y Mallas se manejan **por orden**: cada orden ocupa una casilla.
+  - Papel cerámico se maneja **por orden**: cada orden ocupa una casilla.
   - Tecoflex se maneja **por cantidad**: stock por material y medida, con entradas y salidas.
+  - Mallas y Tejidos se manejan **por cantidad y por CodMat**, cada uno con su propio stock: entra lo fabricado (un sticker por malla) y sale lo usado. Ese stock se descuenta de lo que pide la Lista de corte.
 - **Trazabilidad:** todo movimiento queda registrado con **quién** lo hizo y **cuándo**. Nadie puede usar la app sin usuario.
 - **Formato:** archivos de texto JSON, legibles con cualquier editor. Se pueden abrir para auditoría.
 

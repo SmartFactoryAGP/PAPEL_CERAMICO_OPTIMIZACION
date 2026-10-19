@@ -153,7 +153,10 @@ module.exports = {
     tabla: 'dbo.TuTablaDeCalendario',   // TODO
     columnaOrden: 'Orden',              // TODO: columna que compara contra Ordem_Serial
     columnaPuesto: 'Puestodetrabajo',   // TODO
-    columnaZfer: null                   // TODO opcional: columna de ZFER en esa misma tabla, o null/'' si no aplica
+    columnaZfer: null,                  // TODO opcional: columna de ZFER en esa misma tabla, o null/'' si no aplica
+    columnaPlanCurve: 'PlanCURVE',      // tiene que valer CURVE para entrar a Lista de corte
+    columnaNivelAgp: 'NivelAGP',        // >= 05 entra; 02–04 solo con el ZFER aprobado (vista Aprobaciones)
+    columnaVehiculo: 'Vehiculo'         // se muestra en Lista de corte
   },
 
   /* Consultas de las OTRAS áreas de trabajo (Tecoflex, Mallas) — viven en

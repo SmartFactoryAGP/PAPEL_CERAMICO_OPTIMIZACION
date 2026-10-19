@@ -12,6 +12,7 @@
      Papel cerámico → terracota (cerámica cocida)
      Tecoflex       → verde azulado (polímero técnico)
      Mallas         → violeta (trama)
+     Tejidos        → fucsia (hilo teñido)
 
    Movimiento: corto y con intención (140–420 ms, ease-out "expo"). Las
    cosas entran subiendo un poco y aclarándose, nunca rebotan. Todo se
@@ -72,6 +73,7 @@
 body{ --area:#C2582C; --area-soft:rgba(194,88,44,.10); --area-ink:#8A3816; --area-on-dark:#F08A5D; }
 body[data-area="tecoflex"]{ --area:#0B8C83; --area-soft:rgba(11,140,131,.10); --area-ink:#075B55; --area-on-dark:#3FD0C2; }
 body[data-area="mallas"]{ --area:#6A4BE3; --area-soft:rgba(106,75,227,.10); --area-ink:#4529AE; --area-on-dark:#A894FF; }
+body[data-area="tejidos"]{ --area:#B8327E; --area-soft:rgba(184,50,126,.10); --area-ink:#8A1F5C; --area-on-dark:#F28BC4; }
 
 /* alias que ya usa el código (JS e inline) — mismos nombres de siempre */
 body{
@@ -198,7 +200,8 @@ button.secondary:hover{ background:var(--bg2); border-color:var(--line-strong); 
 .facets::after{ width:380px; height:380px; right:120px; top:-210px; animation:deriva 46s linear infinite alternate-reverse }
 /* Tecoflex: la textura de rombos de su material, apenas insinuada */
 body[data-area="tecoflex"] .loginBrand::after,
-body[data-area="mallas"] .loginBrand::after{
+body[data-area="mallas"] .loginBrand::after,
+body[data-area="tejidos"] .loginBrand::after{
   content:""; position:absolute; inset:0; z-index:1; pointer-events:none;
   /* se desvanece hacia el texto: la textura vive en los bordes del panel */
   -webkit-mask-image:radial-gradient(120% 90% at 100% 100%, #000 0%, transparent 70%);
@@ -255,6 +258,7 @@ body[data-area="mallas"] .loginBrand::after{
 }
 .areaCard[data-area-card="tecoflex"]{ --c:#0B8C83; --c-soft:rgba(11,140,131,.07) }
 .areaCard[data-area-card="mallas"]{ --c:#6A4BE3; --c-soft:rgba(106,75,227,.07) }
+.areaCard[data-area-card="tejidos"]{ --c:#B8327E; --c-soft:rgba(184,50,126,.07) }
 .areaCard input{ position:absolute; opacity:0; pointer-events:none }
 .areaCard:hover{ border-color:var(--line-strong); transform:translateY(-2px); box-shadow:var(--shadow-2) }
 .areaCard:focus-within{ box-shadow:0 0 0 4px var(--primary-ring) }
@@ -307,6 +311,7 @@ body[data-area="mallas"] .loginBrand::after{
 }
 .areaSwitchBtn[data-area-btn="tecoflex"]{ --c:#3FD0C2 }
 .areaSwitchBtn[data-area-btn="mallas"]{ --c:#A894FF }
+.areaSwitchBtn[data-area-btn="tejidos"]{ --c:#F28BC4 }
 .areaSwitchBtn svg{ width:16px; height:16px; color:var(--c) }
 .areaSwitchBtn:hover{ background:rgba(255,255,255,.07); color:#fff; box-shadow:none }
 .areaSwitchBtn.active{ background:#fff; color:var(--navy-900); box-shadow:0 6px 16px -8px rgba(0,0,0,.5) }
@@ -751,3 +756,144 @@ td.name{ max-width:120px; overflow:hidden; text-overflow:ellipsis; white-space:n
 .lgPend.sale{ background:var(--warn-soft); color:var(--warn) }
 .lgSel{ width:18px; height:14px; border-radius:4px; box-shadow:inset 0 0 0 2.5px var(--area); background:color-mix(in srgb, var(--area) 16%, #fff) }
 .lgNa{ color:var(--line-strong); font-weight:700 }
+
+/* ---------- Aprobaciones de ZFER (papel cerámico) ---------- */
+.tabBadge{ display:inline-grid; place-items:center; min-width:18px; height:18px; padding:0 5px; margin-left:6px; border-radius:999px; background:var(--warn); color:#fff; font:800 10.5px var(--font-ui); vertical-align:1px }
+.apFiltro{ grid-template-columns:repeat(4, auto); width:auto }
+.apCandidatos{ display:flex; flex-direction:column; gap:6px; max-height:46vh; overflow:auto }
+.apCand{ display:flex; align-items:center; justify-content:space-between; gap:10px; padding:9px 10px; border:1px solid var(--line-soft); border-radius:11px; background:#fff }
+.apCand:hover{ border-color:var(--line-strong) }
+.apCandTxt{ display:flex; flex-direction:column; gap:2px; min-width:0 }
+.apCandTxt b{ font-size:14px; color:var(--ink) }
+.apCandTxt small{ color:var(--muted); font-size:11.5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap }
+.apTabla td small{ display:block; color:var(--muted); font-size:11px; margin-top:2px }
+.apTabla td.apNotaCol{ white-space:normal; min-width:180px; max-width:280px }
+.apMotivo{ color:var(--ink2) !important; font-style:italic }
+.movTag.ap-pendiente{ background:rgba(178,106,0,.10); color:#9A5B00 }
+.movTag.ap-aprobada{ background:var(--good-soft); color:var(--good) }
+.movTag.ap-rechazada{ background:var(--warn-soft); color:var(--warn) }
+.apAcciones{ display:flex; align-items:center; gap:6px }
+.apMotivoInput{ width:190px; padding:6px 9px !important; font-size:12px !important }
+.apMotivoInput.apFalta{ border-color:var(--warn) !important; box-shadow:0 0 0 3px var(--warn-soft) !important }
+.apAprobar:not(:disabled){ background:var(--good) !important; border-color:var(--good) !important }
+@media (max-width: 720px){
+  .apFiltro{ grid-template-columns:1fr 1fr }
+  .apAcciones{ flex-wrap:wrap }
+  .apMotivoInput{ width:100% }
+}
+
+/* ---------- Lista de corte: agregar al lote arriba de la lista ---------- */
+.quickAdd{ display:grid; grid-template-columns:repeat(auto-fit, minmax(240px, 1fr)); gap:10px; padding:12px; border-radius:12px; background:var(--area-soft); border:1px solid color-mix(in srgb, var(--area) 22%, transparent) }
+.quickAddField{ display:flex; flex-direction:column; gap:5px; min-width:0 }
+.quickAddField label{ font-size:11px; font-weight:800; text-transform:uppercase; letter-spacing:.06em; color:var(--area-ink) }
+.quickAddField .inputIcon.slim input{ background:#fff; border-color:color-mix(in srgb, var(--area) 30%, var(--line)) }
+.quickAddField .inputIcon.slim input:focus{ border-color:var(--area); box-shadow:0 0 0 3px var(--area-soft) }
+.quickAddField .inputIcon > svg{ color:var(--area) }
+.quickAddMsgs{ display:flex; flex-direction:column; gap:2px; margin-top:-4px }
+.quickAddMsgs .hint{ margin:0; font-weight:600 }
+.quickAddMsgs .hint:empty{ display:none }
+/* toda la fila pasa la orden al lote */
+.ordTable tr.ordFila{ cursor:pointer }
+.ordTable tr.ordFila:hover td{ background:var(--area-soft) }
+.ordTable tr.ordFila:active td{ background:color-mix(in srgb, var(--area) 20%, #fff) }
+.ordAddBtn{ display:inline-block; padding:4px 9px; border-radius:8px; border:1px solid var(--line); background:#fff; color:var(--ink2); font:700 11px var(--font-ui); white-space:nowrap }
+.ordTable tr.ordFila:hover .ordAddBtn{ background:var(--area); border-color:var(--area); color:#fff }
+/* ajustes técnicos, solo administradores */
+.ajustesAdmin{ border:1px dashed var(--line-strong); border-radius:11px; padding:8px 12px }
+.ajustesAdmin summary{ cursor:pointer; font-size:12px; font-weight:700; color:var(--muted); list-style-position:inside }
+.ajustesAdmin[open] summary{ margin-bottom:8px }
+.apVehiculo{ font-size:12px; font-weight:700; color:var(--ink2); overflow:hidden; text-overflow:ellipsis; white-space:nowrap }
+
+/* ---------- Mallas: lista por CodMat, entrada y stock ---------- */
+.msTabla td.num, .msTabla th.num{ text-align:right; font-family:var(--font-mono) }
+.msTabla td.msDesc{ max-width:260px; overflow:hidden; text-overflow:ellipsis }
+.ordTable tr.msFila{ cursor:pointer }
+.ordTable tr.msFila:hover td{ background:var(--area-soft) }
+.ordTable tr.msFila:hover .ordAddBtn{ background:var(--area); border-color:var(--area); color:#fff }
+.ordTable tr.msFila.msElegida td{ background:color-mix(in srgb, var(--area) 12%, #fff) }
+.ordTable tr.msFila.msCubierta td{ color:var(--muted) }
+.msFalta{ color:var(--warn); font-weight:800 }
+.msOk{ color:var(--good); font-weight:700 }
+.cartInfo small{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap }
+
+/* ---------- Lista de corte (papel y mallas): la lista es lo principal ----------
+   Lo que era la columna izquierda pasa a ser una barra arriba (indicadores,
+   hora de la lista, resumen y "Forzar"); la lista toma todo el ancho y a la
+   derecha queda una columna angosta: el lote (papel) o la entrada al rack (mallas). */
+#viewOrdenes{ flex-direction:column; gap:14px; overflow-x:visible }
+#viewOrdenes > .barraLista{
+  flex:0 0 auto; width:auto; flex-direction:row; flex-wrap:wrap; align-items:center; gap:10px 14px;
+  padding:12px 16px; overflow:visible
+}
+.barraLista .kpiRow{ display:flex; gap:10px; order:1 }
+.barraLista .stat.big{ flex-direction:row; align-items:baseline; gap:10px; padding:8px 14px; border-radius:11px }
+.barraLista .stat.big::after{ display:none }
+.barraLista .stat.big b{ font-size:22px }
+.barraLista .stat.big span{ font-size:10.5px }
+.barraLista .dayStrip{ order:2; flex-direction:row; align-items:baseline; gap:8px; padding:9px 12px }
+.barraLista #ordBridgeStatus{ order:3; margin:0; flex:1 1 220px; text-align:right }
+.barraLista #ordRefreshBtn{ order:4; width:auto; padding:9px 16px }
+.barraLista #ordAjustesConexion{ order:5 }
+.barraLista #ordAjustesConexion[open]{ flex-basis:100% }
+#ordStagePanel{ min-height:0 }
+#ordStagePanel > .sidepanel{ flex:0 0 330px; min-width:300px }
+#ordStagePanel > .stagepanel{ min-width:520px }
+#ordStagePanel .ordTableScroll{ max-height:none; flex:1 1 auto; min-height:120px }
+.msTabla td, .msTabla th{ padding-left:14px; padding-right:14px }
+/* el lote: tabla compacta que se estira, y al pie lo que se hace con él */
+.lotePanel{ gap:10px }
+.lotePanel .cartHead h3{ font-size:16px }
+.loteTabla td.loteVeh{ max-width:120px; overflow:hidden; text-overflow:ellipsis }
+.loteEstado{ font-size:11.5px; font-weight:700; color:var(--muted) }
+.loteEstado.ok{ color:var(--good) }
+.loteEstado.mal{ color:var(--warn) }
+.loteAcciones{ flex:0 0 auto; display:flex; flex-direction:column; gap:8px; padding-top:12px; border-top:1px solid var(--line-soft) }
+.loteAcciones > button{ width:100% }
+.loteAcciones .hint{ margin:0 }
+.loteAcciones .hint:empty{ display:none }
+@media (max-width: 1100px){
+  #ordStagePanel{ flex-direction:column }
+  #ordStagePanel > .sidepanel{ flex:0 0 auto; min-width:0 }
+  .barraLista #ordBridgeStatus{ text-align:left }
+}
+/* ---------- botón "Excel" de la Lista de corte (esquina superior derecha) ---------- */
+.panelHead .excelBtn{ margin-left:auto }
+.panelHead .hint + .excelBtn, .panelHead .hint ~ .excelBtn{ margin-left:0 }
+.excelBtn{ display:inline-flex; align-items:center; gap:7px; padding:6px 12px 6px 8px; border-radius:9px; background:#fff; border:1px solid var(--line); color:#0B5A2E; font:700 12.5px var(--font-ui); box-shadow:none; width:auto; align-self:center }
+.excelBtn svg{ width:20px; height:20px; flex:none }
+.excelBtn:hover{ background:#EAF6EF; border-color:#7DC59B; color:#0B5A2E; box-shadow:none }
+.excelBtn:disabled{ opacity:.55; cursor:progress }
+.loteTabla{ table-layout:fixed; width:100% }
+.loteTabla th, .loteTabla td{ padding:8px 6px !important; overflow:hidden; text-overflow:ellipsis }
+.loteTabla th:nth-child(1){ width:78px } .loteTabla th:nth-child(3){ width:90px } .loteTabla th:nth-child(4){ width:34px }
+.loteTabla td.rowActions, .loteTabla tr > th:last-child{ position:static; box-shadow:none; background:transparent }
+
+/* ---------- Mallas: grupos (liberadas / planeación) y necesidad por puesto ---------- */
+.msTabla tr.msGrupoHead td{ background:var(--bg2) !important; padding:9px 14px; border-bottom:1px solid var(--line-soft); cursor:default; white-space:normal }
+.msTabla tr.msGrupoHead b{ font-size:12.5px; color:var(--ink); text-transform:uppercase; letter-spacing:.05em }
+.msTabla tr.msGrupoHead span{ margin-left:8px; font-size:11.5px; color:var(--muted) }
+.msTabla tbody.planeacion tr.msFila td{ color:var(--muted) }
+.msTabla tbody.planeacion tr.msGrupoHead td{ background:#FFF7E8 !important }
+.msLado{ gap:14px }
+.msResumen{ display:flex; flex-direction:column; gap:8px; flex:1 1 auto; min-height:0; padding:14px; border-radius:14px; border:1px solid var(--line-soft); background:#fff }
+.msResumen .hint{ margin:0 }
+.msPorPuesto{ display:flex; flex-direction:column; gap:8px; overflow-y:auto; min-height:0 }
+.msPuesto{ border:1px solid var(--line-soft); border-radius:10px; padding:8px 10px; background:var(--bg2) }
+.msPuesto.planeacion{ background:#FFF7E8; border-color:#F0DDB8 }
+.msPuesto.cubierto{ opacity:.65 }
+.msPuestoHead{ display:flex; justify-content:space-between; align-items:baseline; gap:8px; margin-bottom:4px }
+.msPuestoHead > b{ font-size:12.5px; color:var(--ink) }
+.msPuestoHead span{ font-size:11.5px; color:var(--muted) }
+.msPuestoHead span b{ color:var(--warn); font-size:13px }
+.msPuestoLinea{ display:grid; grid-template-columns:auto 1fr auto; gap:8px; align-items:baseline; font-size:11.5px; padding:2px 0 }
+.msPuestoLinea .mono{ color:var(--ink2); font-weight:700 }
+.msPuestoDesc{ color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap }
+.msTabla tr.msGrupoHead td{ font-family:var(--font-ui) !important; font-weight:400 }
+.msResumen{ min-height:260px }
+
+/* Tejidos: hilos que se cruzan (trama y urdimbre, ondulados) */
+body[data-area="tejidos"] .loginBrand::after{
+  background-image:
+    repeating-linear-gradient(0deg, rgba(242,139,196,.20) 0 2px, transparent 2px 22px),
+    repeating-linear-gradient(90deg, rgba(242,139,196,.12) 0 1px, transparent 1px 22px);
+}

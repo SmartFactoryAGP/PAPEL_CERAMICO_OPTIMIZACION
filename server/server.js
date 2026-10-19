@@ -9,7 +9,7 @@
    endpoint verifica el permiso del usuario (área + vista) — entre
    corchetes, la vista que hace falta:
 
-     GET  /api/ordenes-pendientes        -> lista de órdenes por cortar [ordenes]
+     GET  /api/ordenes-pendientes[?forzar=1] -> lista de órdenes por cortar, de la última consulta a SQL (1 por hora; forzar: solo administrador) [ordenes]
      GET  /api/ordenes-pendientes/:orden -> UNA orden por número, sin el filtro de Puestodetrabajo [ordenes]
      GET  /api/lote/:codigo              -> todas las órdenes 0132 de un Código_Lote [ordenes]
      GET  /api/dxf?orden=...&archivo=...  -> el contenido del DXF de una orden [ordenes]
@@ -22,6 +22,9 @@
      POST /api/inventario/movimientos     -> entradas / salidas de stock, en lote [rack]
      GET  /api/eventos                    -> avisos en vivo (Server-Sent Events) [sesión]
      GET  /api/rack-resumen-dia           -> cuántas entraron/salieron del rack hoy [ordenes o rack]
+     GET  /api/aprobaciones               -> solicitudes de ZFER + candidatos (papel) [aprobaciones o aprobar]
+     POST /api/aprobaciones/solicitar     -> pedir que un ZFER CURVE 02–04 lleve papel [aprobaciones o aprobar]
+     POST /api/aprobaciones/:zfer/resolver -> aprobar / rechazar / revocar [aprobar]
      POST /api/imprimir-zpl               -> manda stickers a la Zebra [ordenes o rack]
      POST /api/ordenes/:orden/marcar-en-stock  -> marca una orden como cortada en SQL [ordenes; bloqueado salvo PERMITIR_ESCRITURA_SQL=true]
      GET  /api/rack-actual                -> órdenes en el rack (en SQL) [rack u ordenes]
@@ -31,8 +34,9 @@
      GET  /api/salud                      -> ¿está vivo? (sin sesión)
 
    Módulos: usuarios.js (cuentas y sesiones), datos.js (dónde vive cada
-   archivo), racks.js y inventario.js (almacenamiento de cada rack — lo que
-   se reemplaza el día que pasen a SQL), en-vivo.js (avisos en vivo).
+   archivo), racks.js, inventario.js y aprobaciones.js (almacenamiento —
+   lo que se reemplaza el día que pasen a SQL), reglas-papel.js (qué orden
+   entra a Lista de corte de papel), en-vivo.js (avisos en vivo).
 
    Cómo arrancarlo:
      1) copiá ".env.example" a ".env" y completá tus datos reales
@@ -87,6 +91,10 @@ const notificar = enVivo.notificar;
 const racksMod = require('./racks');
 const racks = racksMod.crear({ datos, notificar });
 const inventario = require('./inventario').crear({ datos, notificar });
+const reglasPapel = require('./reglas-papel');
+const instantanea = require('./instantanea');
+const reglasMallas = require('./reglas-mallas');
+const aprobaciones = require('./aprobaciones').crear({ datos, notificar, areaId: 'papel' });
 /* Área del pedido: la app la manda en la cabecera x-area (ver
    ordApiHeaders en orders.js). Sin cabecera = papel cerámico, para que
    todo lo que ya existía siga funcionando igual. */
@@ -456,78 +464,97 @@ function placeholdersIn(request, prefijo, valores){
   return valores.map((v,i)=>{ request.input(prefijo+i, sql.VarChar, String(v)); return '@'+prefijo+i; }).join(',');
 }
 
-async function traerPuestosDeTrabajo(ordenes){
-  if(!dbConfigCalendario || !ordenes.length) return {};
+/* "BUSCARV" contra Calendario: por cada orden trae Puestodetrabajo, ZFER,
+   PlanCURVE y NivelAGP (una sola consulta por tanda). Los nombres de las
+   columnas salen de queries.js → puestoDeTrabajo; PlanCURVE y NivelAGP
+   tienen nombre por defecto, así un queries.js viejo (que no se pisa al
+   actualizar) funciona sin tocarlo.
+   estricto: si Calendario no está configurado o falla, TIRA ERROR en vez
+   de devolver {} — sin esos datos no se puede decidir qué orden lleva
+   papel, y una lista vacía en silencio confunde más que un aviso claro.
+   Sin estricto (el Rack), se sigue sin Puestodetrabajo como siempre. */
+function columnasCalendario(){
+  const cfg = queries.puestoDeTrabajo || {};
+  const col = (nombre, porDefecto) => (cfg[nombre]===undefined ? porDefecto : cfg[nombre]) || 'NULL';
+  return { cfg, orden: cfg.columnaOrden, puesto: col('columnaPuesto', 'Puestodetrabajo'), zfer: col('columnaZfer', null),
+           planCurve: col('columnaPlanCurve', 'PlanCURVE'), nivel: col('columnaNivelAgp', 'NivelAGP'),
+           vehiculo: col('columnaVehiculo', 'Vehiculo') };
+}
+async function traerCalendario(ordenes, estricto){
+  if(!ordenes.length) return {};
+  if(!dbConfigCalendario){
+    if(estricto) throw errorHttp('Calendario no está configurado (CAL_DB_SERVER en el .env): sin PlanCURVE y NivelAGP no se puede armar la Lista de corte.', 503);
+    return {};
+  }
   try {
     const pool = await getPoolCalendario();
-    const cfg = queries.puestoDeTrabajo;
+    const c = columnasCalendario();
     const mapa = {};
     for(const tanda of enTandas(ordenes, MAX_PARAMS_POR_CONSULTA)){
       const request = pool.request();
       const placeholders = placeholdersIn(request, 'cal', tanda);
       const result = await request.query(
-        `SELECT ${cfg.columnaOrden} AS orden, ${cfg.columnaPuesto} AS puesto FROM ${cfg.tabla} WHERE ${cfg.columnaOrden} IN (${placeholders})`
+        `SELECT ${c.orden} AS orden, ${c.puesto} AS puesto, ${c.zfer} AS zfer, ${c.planCurve} AS planCurve, ${c.nivel} AS nivel, ${c.vehiculo} AS vehiculo
+         FROM ${c.cfg.tabla} WHERE ${c.orden} IN (${placeholders})`
       );
-      result.recordset.forEach(r=>{ mapa[String(r.orden)] = r.puesto; });
+      result.recordset.forEach(r=>{
+        mapa[String(r.orden)] = { puesto: r.puesto, zfer: r.zfer==null ? '' : String(r.zfer).trim(), planCurve: r.planCurve, nivel: r.nivel,
+                                  vehiculo: r.vehiculo==null ? '' : String(r.vehiculo).trim() };
+      });
     }
     return mapa;
   } catch(err){
-    console.error('[puesto-de-trabajo]', err.message);
+    console.error('[calendario]', err.message);
+    if(estricto){ err.message = 'No se pudo consultar Calendario (PlanCURVE / NivelAGP): ' + err.message; throw err; }
     return {};
   }
 }
+/* Solo el Puestodetrabajo (lo que muestra el Rack en SQL). */
+async function traerPuestosDeTrabajo(ordenes){
+  const cal = await traerCalendario(ordenes, false);
+  const mapa = {};
+  Object.keys(cal).forEach(k=>{ mapa[k] = cal[k].puesto; });
+  return mapa;
+}
 
-/* OJO — bloque nuevo (pedido explícito): además de Operation='0132',
-   hay órdenes que NO tienen esa Operation pero SÍ tienen que estar en
-   Lista de corte igual, porque en el mismo "BUSCARV" contra Calendario
-   (la tabla de arriba, la de Puestodetrabajo) traen alguno de los
-   códigos de ZFER que pongas en tu .env (ZFER_LISTA_ESPECIAL) — hoy
-   '70005171', pero puede haber más de uno, y VOS los agregás ahí
-   directo, sin que haga falta tocar código cada vez que aparezca uno
-   nuevo (ver .env.example para el formato). ZFER es otra columna de
-   esa MISMA tabla de Calendario (columnaZfer en puestoDeTrabajo,
-   queries.js) — no de tu vista SAGA.
-   Esta función busca, en Calendario, qué números de orden tienen
-   CUALQUIERA de esos ZFER — devuelve solo los NÚMEROS (strings), no
-   los datos completos: los datos completos (archivo, modelo, etc.)
-   hay que traerlos aparte de tu vista real, porque Calendario no los
-   tiene. */
-const ZFER_INCLUIR = (process.env.ZFER_LISTA_ESPECIAL || '70005171')
+/* Órdenes que entran por ZFER aunque NO tengan Operation='0132': las del
+   .env (ZFER_LISTA_ESPECIAL, hoy '70005171', X5) y los ZFER aprobados en
+   la vista Aprobaciones. Se buscan en Calendario y devuelve solo los
+   NÚMEROS de orden: los datos completos (archivo, modelo...) salen de tu
+   vista real. Igual tienen que cumplir la regla de PlanCURVE / NivelAGP
+   (ver reglas-papel.js). */
+const ZFER_ENV = (process.env.ZFER_LISTA_ESPECIAL || '70005171')
   .split(',').map(s=>s.trim()).filter(Boolean);
 /* La orden puede tener VARIAS filas en tu vista real, una por cada
-   Operation (0132, 0101, etc. — distintas etapas del mismo pedido) —
-   cada una con su propio Desenho_Path. Para las órdenes que entran por
-   cualquiera de los ZFER de arriba, dijiste que el archivo/ruta
-   correcto es el de la fila Operation='0101' puntualmente (no
-   cualquiera de sus filas) — esto es una Operation, no un código de
-   ZFER, son dos cosas distintas que no hay que confundir. Si el día de
-   mañana necesitás que sea otra Operation, también lo podés cambiar en
-   el .env (OPERATION_PARA_ORDENES_ZFER, ver .env.example). */
+   Operation (0132, 0101...), cada una con su propio Desenho_Path. Para las
+   órdenes que entran por ZFER, el archivo correcto es el de la fila
+   Operation='0101' (OPERATION_PARA_ORDENES_ZFER en el .env). */
 const OPERATION_PARA_ORDENES_ZFER = process.env.OPERATION_PARA_ORDENES_ZFER || '0101';
-async function traerOrdenesConZferEspecial(){
-  const cfg = queries.puestoDeTrabajo;
-  if(!dbConfigCalendario || !cfg.columnaZfer || !ZFER_INCLUIR.length) return [];
+function zferIncluidos(aprobadosSet){
+  return [...new Set([...ZFER_ENV.map(reglasPapel.normalizarZfer), ...aprobadosSet])];
+}
+async function traerOrdenesPorZfer(zfers){
+  const c = columnasCalendario();
+  if(!dbConfigCalendario || c.zfer==='NULL' || !zfers.length) return [];
   try {
     const pool = await getPoolCalendario();
-    const request = pool.request();
-    const placeholders = placeholdersIn(request, 'zfer', ZFER_INCLUIR);
-    const result = await request
-      .query(`SELECT DISTINCT ${cfg.columnaOrden} AS orden FROM ${cfg.tabla} WHERE ${cfg.columnaZfer} IN (${placeholders})`);
-    return result.recordset.map(r=>String(r.orden));
+    const seriales = new Set();
+    for(const tanda of enTandas(zfers, MAX_PARAMS_POR_CONSULTA)){
+      const request = pool.request();
+      const placeholders = placeholdersIn(request, 'zfer', tanda);
+      const result = await request.query(`SELECT DISTINCT ${c.orden} AS orden FROM ${c.cfg.tabla} WHERE ${c.zfer} IN (${placeholders})`);
+      result.recordset.forEach(r=>seriales.add(String(r.orden)));
+    }
+    return [...seriales];
   } catch(err){
     console.error('[zfer-especial]', err.message);
     return [];
   }
 }
 
-/* Trae, de tu vista real, los datos completos (mismas columnas que
-   ordenesPendientes/ordenPorSerial) de una lista puntual de números de
-   orden — pero puntualmente de la fila Operation='0101' de cada una
-   (ver OPERATION_PARA_ORDENES_ZFER arriba), NO cualquier fila: la
-   orden puede tener otra fila con Operation='0132' (o distinta) con un
-   Desenho_Path distinto, y ese no es el que corresponde acá. Usa el
-   mismo patrón de placeholders dinámicos que traerPuestosDeTrabajo,
-   contra tu SQL principal (no Calendario). */
+/* Trae, de tu vista real, los datos completos de una lista puntual de
+   números de orden, de la fila Operation=@opFiltro de cada una (ver
+   OPERATION_PARA_ORDENES_ZFER). */
 async function buscarOrdenesPorSerial(seriales, operacion){
   if(!seriales.length || !queries.ordenesPorSerialLista) return [];
   try {
@@ -549,23 +576,9 @@ async function buscarOrdenesPorSerial(seriales, operacion){
 }
 
 /* ============ 1) Lista de órdenes pendientes de cortar ============ */
-/* Solo se muestran en "Lista de corte" las órdenes cuyo Puestodetrabajo
-   (el que viene del servidor de Calendario) sea justo uno de estos 5 —
-   las demás (incluidas las que no tienen ningún Puestodetrabajo
-   cargado todavía) se ocultan. Comparación sin importar mayúsculas ni
-   espacios de más, para no repetir el mismo lío que tuvimos con
-   Centro_Trabalho. */
-const PUESTOS_PERMITIDOS = new Set(['PLANEACION','01CORTE','02CNC','03SERIG','04SER_VT']);
-function puestoPermitido(valor){
-  return PUESTOS_PERMITIDOS.has(String(valor||'').trim().toUpperCase());
-}
-
 /* Pendientes de Tecoflex / Mallas: otras tablas, con su propia consulta
-   (queries.js → areas.<área>.ordenesPendientes). Tiene que devolver las
-   mismas columnas que la de papel cerámico (Ordem_Serial, ARCHIVO...) y,
-   para Tecoflex, opcionalmente "Medida" (la posición del rack que se
-   sugiere al confirmar). No se le aplica el filtro de Puestodetrabajo de
-   papel cerámico — ese filtro es propio de esa área. */
+   (queries.js → areas.<área>.ordenesPendientes). No se les aplica la regla
+   de papel cerámico (Calendario, CURVE, nivel). */
 async function pendientesDeArea(area){
   const consulta = consultaDeArea(area, 'ordenesPendientes'); // antes de conectar: si falta, "pendiente" y listo
   const pool = await getPool();
@@ -573,72 +586,157 @@ async function pendientesDeArea(area){
   return result.recordset;
 }
 
-/* Pedidos iguales casi simultáneos se juntan en UNA consulta: con 30
-   personas tocando "Actualizar" a la vez, antes salían 30 consultas
-   pesadas a SQL (y otras 30 a Calendario) al mismo tiempo. Ahora, mientras
-   una está en curso, las demás esperan esa misma; y el resultado se
-   reusa unos segundos. Si falla, no se guarda (el próximo reintenta). */
-const CACHE_PENDIENTES_MS = parseInt(process.env.CACHE_PENDIENTES_MS || '15000', 10);
-const cacheConsultas = new Map(); // clave -> {hasta, promesa}
-function consultaCompartida(clave, ttlMs, fn){
-  const c = cacheConsultas.get(clave);
-  if(c && (c.enCurso || Date.now() < c.hasta)) return c.promesa;
-  const entrada = { enCurso: true, hasta: 0 };
-  entrada.promesa = fn().then(
-    v=>{ entrada.enCurso = false; entrada.hasta = Date.now() + ttlMs; return v; },
-    e=>{ cacheConsultas.delete(clave); throw e; }
-  );
-  cacheConsultas.set(clave, entrada);
-  return entrada.promesa;
+/* ============ La Lista de corte se consulta a SQL UNA vez por hora ============
+   Ver server/instantanea.js. Cada área guarda en memoria la última lista
+   consultada ("foto") y TODOS la reciben de ahí: tocar "Actualizar" 50
+   veces, o 30 PCs abiertas, no llegan nunca a SQL. La foto se renueva sola
+   cuando vence (LISTA_ACTUALIZAR_MIN, por defecto 60 min) y solo un
+   administrador puede forzarla antes. Cada vez que se renueva, se avisa en
+   vivo y las pantallas se ponen al día leyendo la foto (no SQL). */
+const LISTA_PERIODO_MS = Math.max(0.01, parseFloat(process.env.LISTA_ACTUALIZAR_MIN || '60') || 60) * 60 * 1000;
+const fotosLista = new Map(); // área -> instantánea
+function fotoLista(area){
+  let f = fotosLista.get(area.id);
+  if(!f){
+    f = instantanea.crear({
+      periodoMs: LISTA_PERIODO_MS,
+      minEntreForzadosMs: parseFloat(process.env.LISTA_FORZAR_CADA_S || '30') * 1000,
+      cargar: area.id==='papel' ? cargarPapelCrudo : area.rack.porCodmat ? ()=>cargarMallasCrudo(area) : ()=>pendientesDeArea(area),
+      alActualizar: ()=>notificar({ tipo:'lista', area: area.id }),
+    });
+    fotosLista.set(area.id, f);
+  }
+  return f;
+}
+
+/* Papel: la foto guarda las filas CRUDAS (con Calendario pegado) y la
+   clasificación (qué entra, qué espera aprobación) se calcula en memoria
+   con los ZFER aprobados de ESE momento. Así aprobar o quitar un ZFER
+   cambia la lista al instante, sin volver a consultar SQL entera. */
+async function cargarPapelCrudo(){
+  const aprobados = aprobaciones.aprobados();
+  const pool = await getPool();
+  // la consulta principal (SQL de SAGA) y la de ZFER (Calendario, OTRO
+  // servidor) no dependen una de la otra: van en paralelo
+  const [result, serialesZfer] = await Promise.all([
+    pool.request().query(queries.ordenesPendientes),
+    traerOrdenesPorZfer(zferIncluidos(aprobados))
+  ]);
+  let filas = result.recordset;
+  // las que entran por ZFER (X5 y aprobados) sin tener Operation='0132':
+  // se suman con el archivo de la fila 0101 y pasan por la MISMA regla
+  const seriales0132 = new Set(filas.map(f=>String(f.Ordem_Serial)));
+  const nuevosPorZfer = serialesZfer.filter(s=>!seriales0132.has(s));
+  if(nuevosPorZfer.length) filas = filas.concat(marcarPorZfer(await buscarOrdenesPorSerial(nuevosPorZfer, OPERATION_PARA_ORDENES_ZFER)));
+  const cal = await traerCalendario(filas.map(f=>f.Ordem_Serial), true);
+  return { filas, cal, rev: 0 };
+}
+/* Las que vinieron SOLO por su ZFER (sin 0132) quedan marcadas: si ese ZFER
+   deja de estar incluido (se quita la aprobación), salen de la lista. La
+   marca no viaja en el JSON (no enumerable). */
+function marcarPorZfer(filas){ filas.forEach(f=>Object.defineProperty(f, '_porZfer', { value: true, enumerable: false })); return filas; }
+
+let memoPapel = { datos: null, rev: -1, clave: null, resultado: null };
+function clasificarPapel(datos){
+  const aprobados = aprobaciones.aprobados();
+  const clave = [...aprobados].sort().join('|');
+  const m = memoPapel;
+  if(m.datos===datos && m.rev===datos.rev && m.clave===clave) return m.resultado;
+  const incluidos = new Set(zferIncluidos(aprobados));
+  const filas = datos.filas.filter(f=>!f._porZfer || incluidos.has(reglasPapel.normalizarZfer((datos.cal[String(f.Ordem_Serial)]||{}).zfer)));
+  const resultado = reglasPapel.clasificar(filas, datos.cal, aprobados);
+  memoPapel = { datos, rev: datos.rev, clave, resultado };
+  return resultado;
+}
+
+/* Recién aprobado un ZFER: sus órdenes que ya estaban en la foto (las
+   0132) entran solas al reclasificar; las que NO tienen 0132 (camino X5,
+   archivo de la 0101) se traen con una consulta CHICA, solo de ese ZFER. */
+async function sumarOrdenesDeZfer(zfer){
+  const f = fotoLista(AREAS_CONFIG.areas.papel);
+  if(!f.hayFoto()) return;
+  try {
+    const seriales = await traerOrdenesPorZfer([zfer]);
+    let nuevas = [], cal = {};
+    f.modificar(d=>{ const ya = new Set(d.filas.map(x=>String(x.Ordem_Serial))); nuevas = seriales.filter(s=>!ya.has(s)); d.rev++; });
+    if(!nuevas.length) return;
+    const filas = marcarPorZfer(await buscarOrdenesPorSerial(nuevas, OPERATION_PARA_ORDENES_ZFER));
+    cal = await traerCalendario(filas.map(x=>x.Ordem_Serial), true);
+    f.modificar(d=>{ d.filas.push(...filas); Object.assign(d.cal, cal); d.rev++; });
+  } catch(e){ console.error('[aprobaciones] no se pudieron sumar las órdenes del ZFER', zfer, '— entran en la próxima actualización:', e.message); }
+}
+
+/* Mallas: la foto guarda las filas de SAGA (una por orden) con Calendario
+   pegado; el agrupado por CodMat y puesto, y lo que cubre el stock, se
+   calcula al pedirla (ver reglas-mallas.js): una entrada o salida de stock
+   cambia "Falta" al instante, sin consultar SQL. */
+async function cargarMallasCrudo(area){
+  const pool = await getPool();
+  const result = await pool.request().query(consultaDeArea(area, 'ordenesPendientes'));
+  const filas = result.recordset;
+  const cal = await traerCalendario(filas.map(f=>f.Ordem_Serial), true);
+  return { filas, cal, rev: 0 };
 }
 
 app.get('/api/ordenes-pendientes', exigirPermiso('ordenes'), async (req, res) => {
   try {
     const area = areaDe(req);
-    const filas = await consultaCompartida('pendientes:'+area.id, CACHE_PENDIENTES_MS, ()=>area.id==='papel' ? pendientesPapel() : pendientesDeArea(area));
-    res.json(filas);
+    const puedeForzar = !!req.usuarioObj.admin;
+    const r = await fotoLista(area).obtener({ forzar: puedeForzar && req.query.forzar==='1' });
+    const porCodmat = !!area.rack.porCodmat;
+    res.json({
+      ordenes: area.id==='papel' ? clasificarPapel(r.datos).entran
+             : porCodmat ? reglasMallas.agrupar(r.datos.filas, r.datos.cal, inventario.stockPorMaterial(area)).filas
+             : r.datos,
+      actualizado: new Date(r.actualizado).toISOString(),
+      proxima: new Date(r.proxima).toISOString(),
+      // cambia con cada consulta a SQL, con cada aprobación (papel) y con cada
+      // movimiento de stock (mallas): esas dos cambian la lista sin consultar SQL
+      version: `${r.actualizado}.${(r.datos && r.datos.rev) || 0}.${area.id==='papel' ? [...aprobaciones.aprobados()].sort().join('|') : ''}.${porCodmat ? inventario.version(area) : ''}`,
+      aviso: r.aviso || null,
+      puedeForzar
+    });
   } catch (err) {
     responderError(res, 'ordenes-pendientes', err);
   }
 });
-async function pendientesPapel(){
-  const pool = await getPool();
-  // la consulta principal (SQL de SAGA) y la de ZFER (Calendario, OTRO
-  // servidor) no dependen una de la otra: van en paralelo, así el tiempo
-  // de respuesta es el de la más lenta y no la suma de las dos.
-  const [result, serialesZfer] = await Promise.all([
-    pool.request().query(queries.ordenesPendientes),
-    traerOrdenesConZferEspecial()
-  ]);
-  let filas = result.recordset;
 
-  // pedido explícito: sumar las órdenes que NO tienen Operation='0132'
-  // pero sí tienen ZFER='70005171' en Calendario — mismo tratamiento que
-  // las de siempre (archivo/ruta real, Puestodetrabajo, y el MISMO
-  // filtro de Puestodetrabajo permitido de abajo) una vez que se
-  // juntan con las demás.
-  const seriales0132 = new Set(filas.map(f=>String(f.Ordem_Serial)));
-  const nuevosPorZfer = serialesZfer.filter(s=>!seriales0132.has(s));
-  if(nuevosPorZfer.length){
-    const extra = await buscarOrdenesPorSerial(nuevosPorZfer, OPERATION_PARA_ORDENES_ZFER);
-    filas = filas.concat(extra);
-  }
+/* Ingreso manual (ingreso rápido, lote por código): no exige
+   Puestodetrabajo (como siempre), pero SÍ la regla de CURVE / NivelAGP /
+   ZFER aprobado. Pega las columnas de Calendario y separa las que no
+   pueden entrar, con el motivo. */
+async function filtrarIngresoManualPapel(filas){
+  const cal = await traerCalendario(filas.map(f=>f.Ordem_Serial), true);
+  const aprobados = aprobaciones.aprobados();
+  const permitidas = [], bloqueadas = [];
+  filas.forEach(f=>{
+    const c = cal[String(f.Ordem_Serial)];
+    reglasPapel.pegarCalendario(f, c);
+    const r = reglasPapel.evaluar(c, aprobados);
+    if(r.ok) permitidas.push(f); else bloqueadas.push({ Ordem_Serial: f.Ordem_Serial, ZFER: f.ZFER, motivo: r.motivo });
+  });
+  return { permitidas, bloqueadas };
+}
 
-  const puestos = await traerPuestosDeTrabajo(filas.map(f=>f.Ordem_Serial));
-  filas.forEach(f=>{ f.Puestodetrabajo = puestos[String(f.Ordem_Serial)] || ''; });
-  return filas.filter(f=>puestoPermitido(f.Puestodetrabajo));
+/* Ingreso rápido y lote por código SÍ consultan SQL (una orden o un lote
+   puntual, consultas chicas). Igual tienen tope por persona: alguien
+   pegado al Enter no puede convertirlos en una lluvia de consultas. */
+const BUSQUEDAS_POR_MINUTO = parseInt(process.env.BUSQUEDAS_POR_MINUTO || '40', 10);
+const busquedasPorUsuario = new Map(); // usuario -> [ms, ...]
+setInterval(()=>{ const lim = Date.now() - 60000; busquedasPorUsuario.forEach((l, u)=>{ if(!l.some(t=>t>lim)) busquedasPorUsuario.delete(u); }); }, 5*60000).unref();
+function limitarBusquedas(req, res, next){
+  const ahora = Date.now(), lista = (busquedasPorUsuario.get(req.usuario) || []).filter(t=>t > ahora - 60000);
+  if(lista.length >= BUSQUEDAS_POR_MINUTO) return res.status(429).json({ error: `Demasiadas búsquedas seguidas (máximo ${BUSQUEDAS_POR_MINUTO} por minuto). Esperá un momento.` });
+  lista.push(ahora); busquedasPorUsuario.set(req.usuario, lista);
+  next();
 }
 
 /* Búsqueda puntual de UNA orden por su número, para el "Ingreso
-   rápido" de Lista de corte: a propósito NO aplica el filtro de
-   Puestodetrabajo de arriba (una orden con Puestodetrabajo en blanco,
-   o en cualquier otro valor, se puede seguir agregando a mano al lote
-   si el programador conoce el número) — la única condición que se
-   mantiene es Operation='0132' (ver ordenPorSerial en queries.js).
-   Devuelve encontrada:false si no existe ninguna orden con ese número
-   y esa operación, en vez de un error — es un resultado normal, no
-   una falla. */
-app.get('/api/ordenes-pendientes/:orden', exigirPermiso('ordenes'), async (req, res) => {
+   rápido": exige Operation='0132' (ver ordenPorSerial en queries.js) y,
+   en papel, la regla de CURVE / nivel / ZFER aprobado. Devuelve
+   encontrada:false si no existe, o bloqueada:true con el motivo si existe
+   pero no puede entrar — son resultados normales, no fallas. */
+app.get('/api/ordenes-pendientes/:orden', exigirPermiso('ordenes'), limitarBusquedas, async (req, res) => {
   try {
     const area = areaDe(req);
     const esPapel = area.id === 'papel';
@@ -650,8 +748,8 @@ app.get('/api/ordenes-pendientes/:orden', exigirPermiso('ordenes'), async (req, 
     if(!result.recordset.length) return res.json({ encontrada: false });
     const fila = result.recordset[0];
     if(esPapel){
-      const puestos = await traerPuestosDeTrabajo([fila.Ordem_Serial]);
-      fila.Puestodetrabajo = puestos[String(fila.Ordem_Serial)] || '';
+      const { bloqueadas } = await filtrarIngresoManualPapel([fila]);
+      if(bloqueadas.length) return res.json({ encontrada: true, bloqueada: true, motivo: bloqueadas[0].motivo, orden: fila });
     }
     res.json({ encontrada: true, orden: fila });
   } catch (err) {
@@ -659,17 +757,11 @@ app.get('/api/ordenes-pendientes/:orden', exigirPermiso('ordenes'), async (req, 
   }
 });
 
-/* Todas las órdenes de un "Código_Lote" (tabla de lotes de vidrios,
-   DF_SAGA_LotesVidro), para agregarlas de una al lote de corte en vez
-   de escribirlas una por una en el "Ingreso rápido" de arriba. Mismo
-   criterio que ordenPorSerial: solo exige Operation='0132' (no
-   Centro_Trabalho ni Puestodetrabajo), y trae el Puestodetrabajo real
-   igual (para mostrarlo), sin usarlo para ocultar ninguna. La consulta
-   (ordenesPorLote en queries.js) ya devuelve sin duplicados por orden
-   DENTRO de este lote; si la app pide dos códigos de lote distintos que
-   comparten una orden, el dedupe entre ellos lo hace el frontend
-   (orders.js), no esta ruta. */
-app.get('/api/lote/:codigo', exigirPermiso('ordenes'), async (req, res) => {
+/* Todas las órdenes de un "Código_Lote" (DF_SAGA_LotesVidro), para
+   agregarlas de una al lote de corte. Solo exige Operation='0132' y, en
+   papel, la regla de CURVE / nivel / ZFER aprobado: devuelve
+   {ordenes, bloqueadas:[{Ordem_Serial, ZFER, motivo}]}. */
+app.get('/api/lote/:codigo', exigirPermiso('ordenes'), limitarBusquedas, async (req, res) => {
   try {
     const area = areaDe(req);
     const esPapel = area.id === 'papel';
@@ -678,15 +770,56 @@ app.get('/api/lote/:codigo', exigirPermiso('ordenes'), async (req, res) => {
     const result = await pool.request()
       .input('lote', sql.VarChar, req.params.codigo)
       .query(consulta);
-    const filas = result.recordset;
-    if(esPapel){
-      const puestos = await traerPuestosDeTrabajo(filas.map(f=>f.Ordem_Serial));
-      filas.forEach(f=>{ f.Puestodetrabajo = puestos[String(f.Ordem_Serial)] || ''; });
-    }
-    res.json(filas);
+    if(!esPapel) return res.json({ ordenes: result.recordset, bloqueadas: [] });
+    const { permitidas, bloqueadas } = await filtrarIngresoManualPapel(result.recordset);
+    res.json({ ordenes: permitidas, bloqueadas });
   } catch (err) {
     responderError(res, 'lote/:codigo', err);
   }
+});
+
+/* ============ Aprobación de ZFER (papel cerámico) ============
+   Lógica y almacenamiento en server/aprobaciones.js; la regla que la usa,
+   en reglas-papel.js. */
+function exigirAprobacionZfer(req, res, next){
+  let area;
+  try { area = areaDe(req); } catch(e){ return responderError(res, 'aprobaciones', e); }
+  if(area.aprobacionZfer) return next();
+  res.status(400).json({ error: `${area.nombre} no maneja aprobación de ZFER.` });
+}
+
+app.get('/api/aprobaciones', exigirPermiso('aprobaciones','aprobar'), exigirAprobacionZfer, async (req, res) => {
+  const solicitudes = aprobaciones.leer().sort((a, b)=>String(b.solicitadoEn).localeCompare(String(a.solicitadoEn)));
+  const puedeAprobar = usuarios.puede(req.usuarioObj, 'papel', 'aprobar');
+  // candidatos: ZFER de piezas CURVE 02–04 que hoy quedan afuera de la
+  // lista, sacados de la MISMA foto de la Lista de corte (no consulta SQL
+  // aparte). Si nunca se pudo consultar, las solicitudes se ven igual.
+  let candidatos = null, errorCandidatos = null;
+  if(req.query.candidatos !== '0'){
+    try {
+      const enCurso = new Set(solicitudes.filter(s=>s.estado==='pendiente' || s.estado==='aprobada').map(s=>s.zfer));
+      const r = await fotoLista(AREAS_CONFIG.areas.papel).obtener();
+      candidatos = clasificarPapel(r.datos).candidatos.filter(c=>!enCurso.has(c.zfer));
+    } catch(e){
+      console.error('[aprobaciones/candidatos]', e.message);
+      errorCandidatos = mensajeDeError(e, req);
+    }
+  }
+  res.json({ solicitudes, candidatos, errorCandidatos, puedeAprobar, usuario: req.usuario });
+});
+app.post('/api/aprobaciones/solicitar', exigirPermiso('aprobaciones','aprobar'), exigirAprobacionZfer, (req, res) => {
+  try { res.json(aprobaciones.solicitar(req.body || {}, req.usuario)); }
+  catch(e){ responderError(res, 'aprobaciones/solicitar', e); }
+});
+app.post('/api/aprobaciones/:zfer/resolver', exigirPermiso('aprobar'), exigirAprobacionZfer, async (req, res) => {
+  try {
+    const ficha = aprobaciones.resolver(req.params.zfer, req.body || {}, req.usuarioObj);
+    // la Lista de corte cambia ya (avisa en vivo); si se aprobó, se suman
+    // las órdenes de ese ZFER que no tienen 0132 (consulta chica)
+    if(ficha.estado==='aprobada') await sumarOrdenesDeZfer(ficha.zfer);
+    else fotoLista(AREAS_CONFIG.areas.papel).modificar(d=>{ d.rev++; });
+    res.json(ficha);
+  } catch(e){ responderError(res, 'aprobaciones/resolver', e); }
 });
 
 /* ============ Racks de casillas, COMPARTIDOS entre todas las PC ============
@@ -775,6 +908,10 @@ app.post('/api/rack-simulado/reentrada', exigirPermiso('rack'), conArea((req, re
 
 /* Resumen del día: cuántas entraron y salieron del rack HOY. */
 app.get('/api/rack-resumen-dia', exigirPermiso('ordenes','rack'), conArea((req, res, area) => {
+  if(area.rack.tipo==='inventario'){ // por cantidad: unidades que entraron / salieron hoy, y stock
+    const inv = inventario.consultar(area);
+    return res.json({ entradasHoy: inv.hoy.entra, salidasHoy: inv.hoy.sale, enStock: inv.stock.reduce((s, x)=>s + x.cantidad, 0) });
+  }
   let cortadasHoy = 0, sacadasHoy = 0;
   const historial = racks.leerHistorial(area);
   // el historial está en orden de llegada: se recorre desde el final y se
@@ -794,9 +931,21 @@ app.get('/api/inventario', exigirPermiso('rack'), (req, res) => {
   try { res.json(inventario.consultar(areaDe(req), req.query.version)); }
   catch(e){ responderError(res, 'inventario', e); }
 });
-app.post('/api/inventario/movimientos', exigirPermiso('rack'), (req, res) => {
+/* Rack: entradas y salidas. En Mallas, quien trabaja en Lista de corte
+   (permiso "ordenes") también puede dar ENTRADA a lo que fabricó — pero
+   solo quien tiene "rack" puede dar salida. */
+app.post('/api/inventario/movimientos', exigirPermiso('rack','ordenes'), (req, res) => {
   try {
-    const r = inventario.registrar(areaDe(req), req.body, req.usuario);
+    const area = areaDe(req);
+    if(!usuarios.puede(req.usuarioObj, area.id, 'rack')){
+      const items = Array.isArray(req.body && req.body.items) ? req.body.items : [];
+      if(!area.rack.porCodmat || items.some(it=>!it || it.tipo!=='entrada')){
+        return res.status(403).json({ error: `Para dar salidas en ${area.nombre} hace falta el permiso de Rack. Pedíselo al administrador.` });
+      }
+    }
+    const r = inventario.registrar(area, req.body, req.usuario);
+    // Mallas: el stock descuenta la necesidad de Lista de corte: avisarla
+    if(r.status===200 && !r.cuerpo.repetido && area.rack.porCodmat) notificar({ tipo:'lista', area: area.id });
     res.status(r.status).json(r.cuerpo);
   } catch(e){ responderError(res, 'inventario/movimientos', e); }
 });

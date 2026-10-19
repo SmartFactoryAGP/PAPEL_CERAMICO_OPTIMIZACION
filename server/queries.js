@@ -217,11 +217,18 @@ module.exports = {
      no hace falta tocar server.js). Si la dejás vacía o null, ese
      bloque queda desactivado solo (no agrega ninguna orden por ZFER),
      sin romper el resto de Lista de corte. */
+  /* columnaPlanCurve / columnaNivelAgp: la regla de papel cerámico
+     (server/reglas-papel.js) — PlanCURVE tiene que ser CURVE y NivelAGP
+     >= 05; los CURVE 02, 03 y 04 entran solo con el ZFER aprobado (vista
+     Aprobaciones). Si en Calendario se llaman distinto, cambialo acá. */
   puestoDeTrabajo: {
     tabla: 'dbo.TCAL_CALENDARIO_COLOMBIA_DIRECT',
     columnaOrden: 'Orden',
     columnaPuesto: 'Puestodetrabajo',
-    columnaZfer: 'ZFER'
+    columnaZfer: 'ZFER',
+    columnaPlanCurve: 'PlanCURVE',
+    columnaNivelAgp: 'NivelAGP',
+    columnaVehiculo: 'Vehiculo'      // se muestra en Lista de corte
   },
 
   /* Tecoflex y Mallas: viven en OTRAS tablas — completar cuando estén
@@ -232,8 +239,41 @@ module.exports = {
     tecoflex: {
       // ordenesPendientes: `SELECT ... AS "Ordem_Serial", ... AS "ARCHIVO", ... AS "Medida" FROM dbo.TU_TABLA_TECOFLEX WHERE ...`,
     },
+    /* Mallas: la MISMA vista de SAGA, otros filtros (pedido explícito):
+       Operation 2900, unidad UND y "TNT" dentro de la descripción. No lleva
+       archivo (no pasa por nesting). Cantidad = m2, que con unMed UND trae
+       cuántas mallas lleva la orden (1,000 / 2,000). El Puestodetrabajo y el
+       Vehículo salen del BUSCARV de Calendario, y el agrupado por CodMat y
+       puesto lo hace server/reglas-mallas.js. */
     mallas: {
-      // ordenesPendientes: `SELECT ... AS "Ordem_Serial", ... FROM dbo.TU_TABLA_MALLAS WHERE ...`,
+      ordenesPendientes: `
+        SELECT
+          v.Desenho_OrdemSerial AS "Ordem_Serial",
+          v.Desenho_CodMat      AS "CodMat",
+          v.Desenho_Descricao   AS "Descricao",
+          v.m2                  AS "Cantidad"
+        FROM dbo.SAGA_View_Ficha_Componentes_Colombia v
+        WHERE v.Desenho_Operation = '2900'
+          AND LTRIM(RTRIM(v.unMed)) = 'UND'
+          AND v.Desenho_Descricao LIKE '%TNT%'
+      `,
+    },
+    /* Tejidos: igual que Mallas (Operation 2900, unidad UND), pero los
+       materiales son los que tienen PVTE, PUTE o "tejido" en la descripción. */
+    tejidos: {
+      ordenesPendientes: `
+        SELECT
+          v.Desenho_OrdemSerial AS "Ordem_Serial",
+          v.Desenho_CodMat      AS "CodMat",
+          v.Desenho_Descricao   AS "Descricao",
+          v.m2                  AS "Cantidad"
+        FROM dbo.SAGA_View_Ficha_Componentes_Colombia v
+        WHERE v.Desenho_Operation = '2900'
+          AND LTRIM(RTRIM(v.unMed)) = 'UND'
+          AND (v.Desenho_Descricao LIKE '%PVTE%'
+            OR v.Desenho_Descricao LIKE '%PUTE%'
+            OR v.Desenho_Descricao LIKE '%TEJIDO%')
+      `,
     }
   }
 };

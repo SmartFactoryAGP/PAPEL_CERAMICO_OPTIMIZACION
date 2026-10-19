@@ -10,8 +10,13 @@ const PASOS = [
   ['Inventario Tecoflex y carga', path.join(__dirname, 'inventario.js')],
   ['Migración a SQL (script)', path.join(__dirname, 'migracion.js')],
   ['Seguridad (intentos de robo de datos)', path.join(__dirname, 'seguridad.js')],
+  ['Papel: regla CURVE/NivelAGP y Aprobaciones de ZFER', path.join(__dirname, 'aprobaciones.js')],
+  ['Lista de corte: 1 consulta a SQL por hora', path.join(__dirname, 'lista-protegida.js')],
+  ['Mallas: lista por CodMat y stock', path.join(__dirname, 'mallas.js')],
   ['Navegador (Chrome)', path.join(__dirname, 'navegador.js')],
-].filter(([, f])=>!(process.argv.includes('--sin-navegador') && f.endsWith('navegador.js')));
+  ['Navegador: Lista de corte de papel y Aprobaciones', path.join(__dirname, 'navegador-aprobaciones.js')],
+  ['Navegador: Mallas (entrada con stickers y salida)', path.join(__dirname, 'navegador-mallas.js')],
+].filter(([, f])=>!(process.argv.includes('--sin-navegador') && path.basename(f).startsWith('navegador')));
 
 const resultados = [];
 for(const [nombre, archivo] of PASOS){

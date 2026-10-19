@@ -192,7 +192,70 @@ function zplDeVariosStickers(ordenesConUbicacion){
    PDF como respaldo). */
 async function imprimirStickersZPL(ordenesConUbicacion){
   if(!ordenesConUbicacion.length) return { ok:true };
-  const zpl = zplDeVariosStickers(ordenesConUbicacion);
+  return mandarZPL(zplDeVariosStickers(ordenesConUbicacion));
+}
+
+/* =========================================================
+   STICKERS DE MALLAS — uno por cada malla que entra al Rack
+   =========================================================
+   Mismo tamaño (100x30mm) y el mismo cuidado con el margen de abajo que el
+   de papel cerámico (todo termina antes de los ~18,5mm). Lleva: CodMat
+   (grande y en código de barras, para escanearlo al dar salida),
+   descripción, quién le dio la entrada y cuándo.
+   lineas: [{codmat, descripcion, cantidad}] — usuario y fecha, de la entrada. */
+const fechaSticker = iso => { const d = iso ? new Date(iso) : new Date(); return d.toLocaleString('es-CO', {day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit'}); };
+function zplStickerMalla(l, usuario, fecha){
+  const codmat = escaparZPL(l.codmat);
+  let desc = escaparZPL(l.descripcion || '');
+  if(desc.length>48) desc = desc.slice(0,45)+'...';
+  let quien = escaparZPL(usuario || '—');
+  if(quien.length>24) quien = quien.slice(0,23)+'.';
+  return [
+    '^XA', '^CI28', // ^CI28: UTF-8 (tildes y eñes en la descripción y el nombre)
+    `^PW${mmAdots(100)}`, `^LL${mmAdots(30)}`,
+    `^FO${mmAdots(4)},${mmAdots(1.5)}^A0N,${mmAdots(2)},${mmAdots(2)}^FDCODMAT^FS`,
+    `^FO${mmAdots(4)},${mmAdots(3.5)}^A0N,${mmAdots(5)},${mmAdots(5)}^FD${codmat}^FS`,
+    `^FO${mmAdots(56)},${mmAdots(1.5)}^A0N,${mmAdots(2)},${mmAdots(2)}^FDENTRADA^FS`,
+    `^FO${mmAdots(56)},${mmAdots(3.6)}^A0N,${mmAdots(2.6)},${mmAdots(2.6)}^FD${escaparZPL(fechaSticker(fecha))}^FS`,
+    `^FO${mmAdots(56)},${mmAdots(6.6)}^A0N,${mmAdots(2.2)},${mmAdots(2.2)}^FD${quien}^FS`,
+    `^FO${mmAdots(4)},${mmAdots(9.5)}^BY2^BCN,${mmAdots(6)},N,N,N^FD${codmat}^FS`,
+    `^FO${mmAdots(4)},${mmAdots(16.5)}^A0N,${mmAdots(1.8)},${mmAdots(1.8)}^FD${desc}^FS`,
+    // una copia por malla: un solo diseño con ^PQ (no N etiquetas repetidas en el pedido)
+    `^PQ${Math.max(1, Math.round(l.cantidad))}`,
+    '^XZ'
+  ].join('\n');
+}
+async function imprimirStickersMallasZPL(lineas, usuario, fecha){
+  if(!lineas.length) return { ok:true };
+  return mandarZPL(lineas.map(l=>zplStickerMalla(l, usuario, fecha)).join('\n'));
+}
+function generarStickersMallasPDF(lineas, usuario, fecha){
+  if(!lineas.length) return;
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({unit:'mm', format:[100,30], orientation:'landscape'});
+  let primera = true;
+  lineas.forEach(l=>{
+    for(let i=0; i<Math.max(1, Math.round(l.cantidad)); i++){
+      if(!primera) doc.addPage([100,30], 'landscape');
+      primera = false;
+      doc.setDrawColor(0); doc.setLineWidth(0.4); doc.rect(1,1,98,28);
+      doc.setFont('helvetica','normal'); doc.setFontSize(7); doc.setTextColor(90);
+      doc.text('CODMAT', 4, 6); doc.text('ENTRADA', 58, 6);
+      doc.setFont('helvetica','bold'); doc.setFontSize(15); doc.setTextColor(0);
+      doc.text(String(l.codmat), 4, 13);
+      doc.setFont('helvetica','normal'); doc.setFontSize(8);
+      doc.text(fechaSticker(fecha), 58, 10);
+      doc.text(String(usuario||'—').slice(0, 28), 58, 13.5);
+      dibujarCodigo128(doc, String(l.codmat), 4, 15.5, 60, 7);
+      doc.setFontSize(7); doc.setTextColor(60);
+      let desc = String(l.descripcion||''); if(desc.length>60) desc = desc.slice(0,57)+'...';
+      doc.text(desc, 4, 26.5);
+    }
+  });
+  doc.save(`stickers_${typeof areaActualId!=='undefined' ? areaActualId : 'rack'}_${new Date().toISOString().slice(0,10)}.pdf`);
+}
+
+async function mandarZPL(zpl){
   const res = await fetch(ordBridgeUrl()+'/api/imprimir-zpl', {
     method:'POST', headers: ordApiHeaders({'Content-Type':'application/json'}),
     body: JSON.stringify({ zpl })

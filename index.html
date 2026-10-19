@@ -10,7 +10,7 @@
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Manrope:wght@600;700;800&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;700&display=swap">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
-<link rel="stylesheet" href="css/styles.css?v=20261018b">
+<link rel="stylesheet" href="css/styles.css?v=20261020b">
 </head>
 <body data-area="papel">
 
@@ -23,7 +23,7 @@
       <div class="logoCard"><img src="img/agp-logo.png" alt="AGP"></div>
       <p class="eyebrow">AGP Colombia · Planta CO01</p>
       <h1 class="loginTitle">Materiales<br>Semiterminados</h1>
-      <p class="loginLead">Papel cerámico, Tecoflex y mallas en un solo lugar: qué hay por cortar, cómo se acomoda en la lámina y dónde quedó cada orden en el rack.</p>
+      <p class="loginLead">Papel cerámico, Tecoflex, mallas y tejidos en un solo lugar: qué hay por cortar, cómo se acomoda en la lámina y dónde quedó cada orden en el rack.</p>
       <ul class="loginFeatures">
         <li><span class="featIcon"><svg viewBox="0 0 24 24"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg></span>
           <div><b>Lista de corte conectada a SQL</b><small>Pendientes, lotes por código e ingreso con lector de código de barras.</small></div></li>
@@ -98,6 +98,7 @@
       <button class="viewTab" id="tabNesting" data-view="nesting" data-requiere="1">Nesting</button>
       <button class="viewTab active" id="tabRack" data-view="rack">Rack</button>
       <button class="viewTab" id="tabRepair" data-view="repair" data-requiere="1">Editor de archivos</button>
+      <button class="viewTab" id="tabAprobaciones" data-view="aprobaciones" data-requiere="1">Aprobaciones <span class="tabBadge" id="apBadge" hidden>0</span></button>
       <button class="viewTab tabAdmin" id="tabUsuarios" data-view="usuarios" hidden>Usuarios</button>
     </div>
     <div class="subbarRight"><span class="liveTag" id="liveTag" title="Conectando…"><i></i><span>Conectando…</span></span><div class="areaTag"><span class="areaDot"></span><span data-area-nombre>Papel cerámico</span></div></div>
@@ -307,89 +308,133 @@
     <button class="secondary" type="button" onclick="switchView('rack')">Ir al Rack</button>
   </div>
 
-  <div class="panel controls" data-areas="papel mallas">
-    <div class="hint" style="margin-top:0" data-areas="papel">Trae las órdenes pendientes de <b>Papel cerámico</b>, las nestea en un solo lote y, al confirmar, las manda al Rack.</div>
-    <div class="hint" style="margin-top:0" data-areas="mallas">Trae las órdenes pendientes de <b>Mallas</b>. Armá el lote y confirmalo directo al Rack: Mallas no pasa por nesting.</div>
-
-    <div id="ordSimRackBlock" data-areas="papel">
-      <label class="chk" style="margin-top:0"><input type="checkbox" id="ordSimRack" checked> Simular el Rack por ahora</label>
-      <div class="hint">Con esto activado, confirmar un lote NO escribe nada en tu SQL: el Rack se maneja en el puente (compartido entre PCs). Para escribir en SQL hace falta la tabla de <code>server/sql/crear_tabla_control.sql</code>.</div>
-    </div>
-
-    <div class="row2">
-      <div class="field" id="ordBridgeUrlField"><label for="ordBridgeUrl">Dirección del puente</label><input type="text" id="ordBridgeUrl" value="http://localhost:4000"></div>
-      <div class="field" id="ordApiTokenField"><label for="ordApiToken">Clave del puente</label><input type="password" id="ordApiToken" placeholder="si configuraste API_TOKEN"></div>
-    </div>
-    <button class="secondary" id="ordRefreshBtn">Actualizar lista de pendientes</button>
-    <div class="hint" id="ordBridgeStatus">&nbsp;</div>
+  <!-- Barra de arriba (indicadores, hora de la lista, resumen, "Forzar"):
+       la Lista de corte es lo principal y toma todo el ancho debajo. -->
+  <div class="panel controls barraLista" data-areas="papel mallas tejidos">
+    <!-- La lista se actualiza sola cada hora (el puente consulta SQL una
+         sola vez y todos la ven). Forzarla antes: solo administradores. -->
+    <button id="ordRefreshBtn" data-solo-admin hidden title="Consulta SQL ya, sin esperar la hora. Todas las PCs reciben la lista nueva.">Forzar actualización desde SQL</button>
+    <div class="hint listaHora" id="ordBridgeStatus">&nbsp;</div>
 
     <div class="kpiRow">
       <div class="stat big" id="ordCountBox"><span>Pendientes</span><b id="ordCount">—</b></div>
-      <div class="stat big" id="ordLoteCountBox"><span>En el lote</span><b id="ordLoteCount">0</b></div>
+      <div class="stat big" id="ordLoteCountBox" data-areas="papel"><span>En el lote</span><b id="ordLoteCount">0</b></div>
+      <div class="stat big warn" data-areas="mallas tejidos" title="Lo que falta para las órdenes ya liberadas (sin Planeación)"><span>Faltan (liberadas)</span><b id="msKpiFalta">—</b></div>
     </div>
+
     <div class="dayStrip"><span>Resumen del día</span><b id="ordResumenDia">—</b></div>
 
-    <fieldset>
-      <legend>Ingreso rápido</legend>
-      <div class="hint" style="margin-top:0">Escribí (o escaneá) un número de orden y Enter: se agrega al lote y el cuadro queda listo para la siguiente.</div>
-      <input type="text" id="ordIngresoRapidoInput" class="inputPlain" placeholder="Número de orden y Enter..." autocomplete="off" aria-label="Número de orden">
-      <div class="hint" id="ordIngresoRapidoResultado" style="margin-top:6px">&nbsp;</div>
-    </fieldset>
-
-    <fieldset data-areas="papel">
-      <legend>Agregar por código de lote</legend>
-      <div class="hint" style="margin-top:0">Escribí un Código_Lote (DF_SAGA_LotesVidro) y Enter: agrega al lote todas sus órdenes Operation 0132, sin el filtro de Puestodetrabajo. Si una orden ya está en el lote, no se repite.</div>
-      <input type="text" id="ordCodigoLoteInput" class="inputPlain" placeholder="Código de lote y Enter..." autocomplete="off" aria-label="Código de lote">
-      <div class="hint" id="ordCodigoLoteResultado" style="margin-top:6px">&nbsp;</div>
-    </fieldset>
-
-    <fieldset>
-      <legend>Lote de corte</legend>
-      <div data-areas="papel">
-        <div class="hint" style="margin-top:0">Armá el lote con "+ Lote" en cada orden. Usa los ajustes de la pestaña Nesting y se detiene solo a los minutos que pongas acá.</div>
-        <div class="field" style="margin-top:10px"><label for="ordMaxMinutes">Tiempo máximo del lote (min)</label><input type="number" id="ordMaxMinutes" value="2" min="0.5" max="60" step="0.5"></div>
-        <button id="ordRunBtn" style="margin-top:10px" disabled>Ejecutar lote de corte</button>
+    <!-- Ajustes técnicos de conexión: SOLO administradores (data-solo-admin,
+         ver authActualizarUI). Un operario no tiene por qué verlos ni
+         cambiarlos; igual el puente rechaza escribir en SQL salvo
+         PERMITIR_ESCRITURA_SQL=true en el .env, aunque alguien los toque. -->
+    <details class="ajustesAdmin" id="ordAjustesConexion" data-solo-admin hidden>
+      <summary>Ajustes de conexión <span class="rolTag">Admin</span></summary>
+      <div id="ordSimRackBlock" data-areas="papel">
+        <label class="chk" style="margin-top:0"><input type="checkbox" id="ordSimRack" checked> Simular el Rack</label>
+        <div class="hint">Activado: confirmar un lote NO escribe en SQL; el Rack se maneja en el puente (compartido entre PCs).</div>
       </div>
-      <button class="secondary" id="ordConfirmBtn" style="margin-top:10px" disabled>Confirmar y enviar al Rack</button>
-      <div class="hint" style="margin-top:6px" data-areas="papel">"Ejecutar" te muestra el acomodo en Nesting y vuelve solo acá. Si alguna orden quedó "sin ubicar", quitala y agregá otra. "Confirmar" genera el PDF, imprime los stickers y manda al Rack solo las ubicadas.</div>
-      <div class="hint" style="margin-top:6px" data-areas="mallas">"Confirmar" manda todo el lote al Rack con su casilla asignada e imprime los stickers.</div>
-    </fieldset>
-
-    <div class="hint" id="ordRunStatus">&nbsp;</div>
+      <div class="row2">
+        <div class="field" id="ordBridgeUrlField"><label for="ordBridgeUrl">Dirección del puente</label><input type="text" id="ordBridgeUrl" value="http://localhost:4000"></div>
+        <div class="field" id="ordApiTokenField"><label for="ordApiToken">Clave del puente</label><input type="password" id="ordApiToken" placeholder="si hay API_TOKEN"></div>
+      </div>
+    </details>
   </div>
 
   <!-- Dos columnas lado a lado: la Lista de corte y, al lado, el Lote
        actual. Un solo contenedor (#ordStagePanel) para que el listener por
        delegación de orders.js cubra las dos tablas. -->
-  <div class="stagerow" id="ordStagePanel" data-areas="papel mallas">
+  <div class="stagerow" id="ordStagePanel" data-areas="papel mallas tejidos">
     <div class="panel stagepanel">
-      <div class="panelHead"><h3>Lista de corte</h3><span class="hint">Tocá un encabezado para ordenar</span></div>
+      <div class="panelHead"><h3>Lista de corte</h3>
+        <span class="hint" data-areas="papel">Solo <b>CURVE</b> NivelAGP <b>05+</b>, o CURVE 02–04 con ZFER aprobado · tocá una fila para pasarla al lote</span>
+        <span class="hint" data-areas="mallas tejidos"><b>Falta</b> = lo que hay que fabricar (ya descuenta el stock) · tocá una fila para darle entrada</span>
+        <!-- descarga lo que está en la tabla (con el filtro y el orden de ese momento) -->
+        <button type="button" class="excelBtn" id="ordExcelBtn" title="Descargar en Excel lo que está en la tabla (con el filtro y el orden actuales)">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="3" width="20" height="18" rx="3.5" fill="#107C41"/><path d="M8 8l8 8M16 8l-8 8" stroke="#fff" stroke-width="2.4" stroke-linecap="round"/></svg>
+          <span>Excel</span>
+        </button></div>
+
+      <!-- Agregar al lote: arriba de la lista, donde está la vista (antes
+           estaba al final del panel izquierdo). Pensado para la pistola:
+           escaneás, Enter, y el cuadro queda listo para la siguiente. -->
+      <div class="quickAdd" data-areas="papel">
+        <div class="quickAddField">
+          <label for="ordIngresoRapidoInput">Agregar orden</label>
+          <div class="inputIcon slim">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6v12M8 6v12M12 6v12M15 6v12M19 6v12"/></svg>
+            <input type="text" id="ordIngresoRapidoInput" placeholder="Escaneá o escribí el número y Enter" autocomplete="off">
+          </div>
+        </div>
+        <div class="quickAddField" data-areas="papel">
+          <label for="ordCodigoLoteInput">Agregar código de lote</label>
+          <div class="inputIcon slim">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="6" rx="1.5"/><rect x="3" y="14" width="18" height="6" rx="1.5"/></svg>
+            <input type="text" id="ordCodigoLoteInput" placeholder="Código_Lote y Enter (agrega todas sus órdenes)" autocomplete="off">
+          </div>
+        </div>
+      </div>
+      <div class="quickAddMsgs" data-areas="papel">
+        <div class="hint" id="ordIngresoRapidoResultado"></div>
+        <div class="hint" id="ordCodigoLoteResultado"></div>
+      </div>
+
       <div class="searchRow">
         <div class="inputIcon slim">
           <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
-          <input type="text" id="ordBuscarInput" placeholder="Buscar por orden, Puestodetrabajo, modelo..." aria-label="Buscar en la lista de corte">
+          <input type="text" id="ordBuscarInput" placeholder="Filtrar por orden, CodMat, vehículo, puesto..." aria-label="Filtrar la lista de corte">
         </div>
-        <button class="secondary" id="ordAddAllVisibleBtn">+ Agregar visibles al lote</button>
+        <button class="secondary" id="ordAddAllVisibleBtn" data-areas="papel">+ Agregar visibles al lote</button>
       </div>
       <div class="ordTableScroll" id="ordTableWrap">
-        <div class="empty">Tocá "Actualizar lista de pendientes" para traer las órdenes.</div>
+        <div class="empty">Cargando la lista…</div>
       </div>
     </div>
 
-    <div class="panel sidepanel">
-      <div class="panelHead"><h3>Lote actual</h3></div>
-      <div class="hint" style="margin-top:0">Si después de nestear una pieza no entra, sacala con "Quitar" (vuelve sola a la lista) y agregá otra.</div>
-      <div class="ordTableScroll" id="ordLoteWrap" style="margin-top:8px">
+    <!-- Papel: el lote, y al pie lo que se hace con él (Ejecutar → Confirmar) -->
+    <div class="panel sidepanel lotePanel" data-areas="papel">
+      <div class="cartHead"><h3>Lote actual</h3><span class="cartCount" id="ordLoteCountChip">0</span></div>
+      <div class="hint" style="margin-top:0">Si después de nestear una pieza no entra, sacala con ✕ (vuelve sola a la lista) y agregá otra.</div>
+      <div class="ordTableScroll" id="ordLoteWrap">
         <div class="empty">Todavía no agregaste ninguna orden al lote.</div>
       </div>
+      <div class="loteAcciones">
+        <div class="field"><label for="ordMaxMinutes">Tiempo máximo del nesting (min)</label><input type="number" id="ordMaxMinutes" value="2" min="0.5" max="60" step="0.5"></div>
+        <button id="ordRunBtn" disabled>Ejecutar lote de corte</button>
+        <button class="secondary" id="ordConfirmBtn" disabled>Confirmar y enviar al Rack</button>
+        <div class="hint">"Ejecutar" muestra el acomodo en Nesting y vuelve solo acá. "Confirmar" genera el PDF, imprime los stickers y manda al Rack solo las ubicadas.</div>
+        <div class="hint" id="ordRunStatus"></div>
+      </div>
+    </div>
+
+    <!-- Mallas y Tejidos: lo fabricado entra al Rack (stock por CodMat), con un sticker por unidad -->
+    <div class="panel sidepanel msLado" data-areas="mallas tejidos">
+      <section class="cart" aria-label="Entrada al rack">
+        <div class="cartHead">
+          <h3>Entrada al rack</h3><span class="cartCount" id="msEntCount">0</span>
+          <button type="button" class="btnGhost btnSm" id="msEntVaciar" hidden>Vaciar</button>
+        </div>
+        <div class="hint" style="margin-top:-4px">Tocá en la lista lo que fabricaste. La cantidad arranca en lo que falta; cambiala si hiciste otra cantidad.</div>
+        <div class="cartList" id="msEntLista"></div>
+        <div class="field"><label for="msEntNota">Nota (opcional)</label><input type="text" id="msEntNota" maxlength="200" placeholder="ej: turno B"></div>
+        <button id="msEntConfirmar" disabled>Dar entrada</button>
+        <div class="hint" id="msEntStatus">&nbsp;</div>
+      </section>
+
+      <!-- cuántas unidades hacen falta en cada puesto (la lista de al lado va por CodMat, sin puesto) -->
+      <section class="msResumen" aria-label="Necesidad por puesto de trabajo">
+        <div class="cartHead"><h3>Necesidad por puesto</h3><span class="cartCount" id="msPorPuestoCount">0</span></div>
+        <div class="hint">Lo que falta fabricar en cada puesto, con el stock ya descontado. Planeación: órdenes todavía no liberadas.</div>
+        <div class="msPorPuesto" id="msPorPuesto"><div class="cartEmpty">Cargando…</div></div>
+      </section>
     </div>
   </div>
 </div>
 
 <!-- ================================ RACK ================================ -->
 <div class="layout" id="viewRack">
-  <!-- ===== Rack por órdenes (papel cerámico, mallas) ===== -->
-  <div class="panel controls" data-areas="papel mallas">
+  <!-- ===== Rack por órdenes (papel cerámico) ===== -->
+  <div class="panel controls" data-areas="papel">
     <div class="hint" style="margin-top:0">Acá quedan las órdenes ya cortadas de <b data-area-nombre>Papel cerámico</b>, cada una con su ubicación. Se llenan solas al confirmar un lote en "Lista de corte".</div>
     <div class="stat big"><span>Órdenes en rack</span><b id="rackCount">—</b></div>
     <div class="hint" id="rackCapacidad">&nbsp;</div>
@@ -404,11 +449,42 @@
 
     <div class="hint" id="rackStickerStatus">&nbsp;</div>
   </div>
-  <div class="panel stagepanel" data-areas="papel mallas">
+  <div class="panel stagepanel" data-areas="papel">
     <div class="panelHead"><h3>Rack</h3><span class="hint">"Reimprimir sticker" vuelve a mandar el sticker sin mover la orden.</span></div>
     <div class="chapasWrap tableWrap" id="rackWrap">
       <div class="empty">Todavía no hay ninguna orden en el rack.</div>
     </div>
+  </div>
+
+  <!-- ===== Rack de Mallas y Tejidos: stock por CodMat (ver js/ui/mallas.js) ===== -->
+  <div class="panel controls" data-areas="mallas tejidos">
+    <div class="hint" style="margin-top:0">Stock de <span data-pieza="varias">mallas</span> por <b>CodMat</b>. Entra desde <b>Lista de corte</b> (con un sticker por <span data-pieza="una">malla</span>) y sale acá cuando se usa.</div>
+    <div class="kpiRow">
+      <div class="stat big"><span><span data-pieza="varias">mallas</span> en stock</span><b id="msKpiStock">—</b></div>
+      <div class="stat big"><span>Hoy entran / salen</span><b id="msKpiHoy">—</b></div>
+    </div>
+
+    <section class="cart" aria-label="Salida del rack">
+      <div class="cartHead">
+        <h3>Salida</h3><span class="cartCount" id="msSalCount">0</span>
+        <button type="button" class="btnGhost btnSm" id="msSalVaciar" hidden>Vaciar</button>
+      </div>
+      <div class="inputIcon slim">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6v12M8 6v12M12 6v12M15 6v12M19 6v12"/></svg>
+        <input type="text" id="msSalScan" placeholder="Escaneá el sticker y Enter (suma 1)" autocomplete="off" aria-label="Escanear sticker">
+      </div>
+      <div class="hint" id="msSalScanMsg" style="margin-top:-4px"></div>
+      <div class="cartList" id="msSalLista"></div>
+      <div class="field"><label for="msSalNota">Nota (opcional)</label><input type="text" id="msSalNota" maxlength="200" placeholder="ej: a la línea de ensamble"></div>
+      <button id="msSalConfirmar" disabled>Registrar salida</button>
+      <div class="hint" id="msSalStatus">&nbsp;</div>
+    </section>
+  </div>
+  <div class="panel stagepanel" data-areas="mallas tejidos">
+    <div class="panelHead"><h3>Stock</h3><span class="hint">"Falta" ya descuenta el stock de lo que pide Lista de corte</span></div>
+    <div class="tableWrap" id="msStockWrap"><div class="empty">Cargando…</div></div>
+    <div class="panelHead"><h3>Movimientos recientes</h3></div>
+    <div class="tableWrap invMovsWrap" id="msMovs"><div class="empty">—</div></div>
   </div>
 
   <!-- ===== Rack de Tecoflex: inventario por material y medida ===== -->
@@ -480,6 +556,46 @@
   </div>
 </div>
 
+<!-- ======================= APROBACIONES DE ZFER (papel cerámico) ======================= -->
+<div class="layout" id="viewAprobaciones" style="display:none">
+  <div class="panel controls">
+    <div class="hint" style="margin-top:0">Entran a Lista de corte las piezas <b>CURVE</b> con NivelAGP <b>05 o más</b>. Las CURVE <b>02, 03 y 04</b> entran solo si su <b>ZFER está aprobado</b>: pedilo acá y otra persona lo aprueba. Aprobado, todas las órdenes de ese ZFER entran de ahí en adelante.</div>
+
+    <fieldset>
+      <legend>Pedir aprobación</legend>
+      <form id="apForm" novalidate>
+        <div class="field"><label for="apZfer">ZFER</label><input type="text" id="apZfer" maxlength="40" autocomplete="off" placeholder="ej: 70012345"></div>
+        <div class="field"><label for="apNota">¿Por qué lleva papel? <span class="labelHint">(opcional)</span></label><input type="text" id="apNota" maxlength="300" placeholder="ej: plano con papel en la zona del sensor"></div>
+        <button type="submit" id="apSolicitarBtn">Pedir aprobación</button>
+      </form>
+      <div class="hint" id="apFormMsg">&nbsp;</div>
+    </fieldset>
+
+    <div class="panelHead" style="margin-top:4px"><h3>Sin aprobar</h3><span class="cartCount" id="apCandCount">0</span></div>
+    <div class="hint" style="margin-top:-6px">ZFER de piezas CURVE 02–04 que hoy quedan <b>fuera</b> de Lista de corte. Tocá "Pedir" para solicitar que entren.</div>
+    <div class="apCandidatos" id="apCandidatos"><div class="empty">Cargando…</div></div>
+  </div>
+
+  <div class="panel stagepanel">
+    <div class="kpiRow kpi3">
+      <div class="stat big"><span>Pendientes</span><b id="apKpiPend">—</b></div>
+      <div class="stat big"><span>Aprobados</span><b id="apKpiAprob">—</b></div>
+      <div class="stat big"><span>Rechazados</span><b id="apKpiRech">—</b></div>
+    </div>
+    <div class="panelHead">
+      <h3>Solicitudes</h3>
+      <div class="segmented segSm apFiltro" id="apFiltro" role="radiogroup" aria-label="Filtrar solicitudes">
+        <button type="button" class="segBtn active" data-estado="pendiente" role="radio" aria-checked="true">Pendientes</button>
+        <button type="button" class="segBtn" data-estado="aprobada" role="radio" aria-checked="false">Aprobados</button>
+        <button type="button" class="segBtn" data-estado="rechazada" role="radio" aria-checked="false">Rechazados</button>
+        <button type="button" class="segBtn" data-estado="" role="radio" aria-checked="false">Todos</button>
+      </div>
+    </div>
+    <div class="hint" id="apRolNota" style="margin-top:-6px">&nbsp;</div>
+    <div class="tableWrap" id="apLista"><div class="empty">Cargando…</div></div>
+  </div>
+</div>
+
 <!-- ============================== USUARIOS (solo administradores) ============================== -->
 <div class="layout" id="viewUsuarios" style="display:none">
   <div class="panel controls">
@@ -546,51 +662,54 @@
 </div>
 
 <!-- ===== núcleo geométrico (sin dependencias del resto) ===== -->
-<script src="js/core/geometry.js?v=20261018b"></script>
-<script src="js/core/polygon.js?v=20261018b"></script>
-<script src="js/core/transform.js?v=20261018b"></script>
-<script src="js/core/areas-config.js?v=20261018b"></script>
+<script src="js/core/geometry.js?v=20261020b"></script>
+<script src="js/core/polygon.js?v=20261020b"></script>
+<script src="js/core/transform.js?v=20261020b"></script>
+<script src="js/core/areas-config.js?v=20261020b"></script>
 
 <!-- ===== lectura y reparación de DXF ===== -->
-<script src="js/dxf/parser.js?v=20261018b"></script>
-<script src="js/dxf/repair.js?v=20261018b"></script>
+<script src="js/dxf/parser.js?v=20261020b"></script>
+<script src="js/dxf/repair.js?v=20261020b"></script>
 
 <!-- ===== motor de nesting ===== -->
-<script src="js/nesting/orientation.js?v=20261018b"></script>
-<script src="js/nesting/placement.js?v=20261018b"></script>
-<script src="js/nesting/scoring.js?v=20261018b"></script>
-<script src="js/nesting/optimization.js?v=20261018b"></script>
+<script src="js/nesting/orientation.js?v=20261020b"></script>
+<script src="js/nesting/placement.js?v=20261020b"></script>
+<script src="js/nesting/scoring.js?v=20261020b"></script>
+<script src="js/nesting/optimization.js?v=20261020b"></script>
 
 <!-- ===== puente al Web Worker real (Bloque 3) ===== -->
-<script src="js/nesting/worker-bridge.js?v=20261018b"></script>
+<script src="js/nesting/worker-bridge.js?v=20261020b"></script>
 
 <!-- ===== tiras de relleno automáticas ===== -->
-<script src="js/strips/strips.js?v=20261018b"></script>
+<script src="js/strips/strips.js?v=20261020b"></script>
 
 <!-- ===== interfaz ===== -->
-<script src="js/ui/html.js?v=20261018b"></script>
-<script src="js/ui/areas.js?v=20261018b"></script>
-<script src="js/ui/pieces.js?v=20261018b"></script>
-<script src="js/ui/render.js?v=20261018b"></script>
-<script src="js/ui/history.js?v=20261018b"></script>
-<script src="js/ui/repair.js?v=20261018b"></script>
+<script src="js/ui/html.js?v=20261020b"></script>
+<script src="js/ui/areas.js?v=20261020b"></script>
+<script src="js/ui/pieces.js?v=20261020b"></script>
+<script src="js/ui/render.js?v=20261020b"></script>
+<script src="js/ui/history.js?v=20261020b"></script>
+<script src="js/ui/repair.js?v=20261020b"></script>
 
 <!-- ===== orquestación del motor (une UI + nesting) ===== -->
-<script src="js/nesting/engine.js?v=20261018b"></script>
+<script src="js/nesting/engine.js?v=20261020b"></script>
 
 <!-- ===== exportación ===== -->
-<script src="js/export/dxf.js?v=20261018b"></script>
-<script src="js/export/zip.js?v=20261018b"></script>
-<script src="js/export/pdf.js?v=20261018b"></script>
-<script src="js/export/stickers.js?v=20261018b"></script>
+<script src="js/export/dxf.js?v=20261020b"></script>
+<script src="js/export/zip.js?v=20261020b"></script>
+<script src="js/export/pdf.js?v=20261020b"></script>
+<script src="js/export/stickers.js?v=20261020b"></script>
+<script src="js/export/excel.js?v=20261020b"></script>
 
 <!-- ===== arranque de la app (áreas, pestañas, sesión) ===== -->
-<script src="js/ui/orders.js?v=20261018b"></script>
-<script src="js/ui/inventario.js?v=20261018b"></script>
-<script src="js/ui/tiempo-real.js?v=20261018b"></script>
-<script src="js/ui/auth.js?v=20261018b"></script>
-<script src="js/ui/usuarios.js?v=20261018b"></script>
-<script src="js/app.js?v=20261018b"></script>
+<script src="js/ui/orders.js?v=20261020b"></script>
+<script src="js/ui/inventario.js?v=20261020b"></script>
+<script src="js/ui/mallas.js?v=20261020b"></script>
+<script src="js/ui/tiempo-real.js?v=20261020b"></script>
+<script src="js/ui/auth.js?v=20261020b"></script>
+<script src="js/ui/usuarios.js?v=20261020b"></script>
+<script src="js/ui/aprobaciones.js?v=20261020b"></script>
+<script src="js/app.js?v=20261020b"></script>
 
 <!-- Aviso de seguridad: si el CSS o el JS no llegaron a cargar (por ej.
      si abriste este archivo haciendo doble clic ADENTRO de un .zip sin

@@ -61,6 +61,15 @@ function trRefrescarVistaActual(){
 function trDespachar(evento){
   if(evento.tipo==='inventario'){
     if(typeof invAplicarResultado==='function') invAplicarResultado(evento);
+    if(typeof msAplicarResultado==='function') msAplicarResultado(evento);
+  } else if(evento.tipo==='aprobaciones'){
+    if(typeof apAlCambiar==='function') apAlCambiar();
+  } else if(evento.tipo==='lista'){
+    // el puente renovó la Lista de corte (hora cumplida, forzada por el
+    // administrador, o un ZFER aprobado): se relee de su memoria, no de SQL
+    if(evento.area!==areaActualId) return;
+    if(typeof ordUltimaLista!=='undefined' && ordUltimaLista.area===areaActualId) ordRefrescar({auto:true});
+    if(typeof appVistaActual!=='undefined' && appVistaActual==='aprobaciones' && typeof apCargar==='function') apCargar();
   } else if(evento.tipo==='rack'){
     // solo si se está mirando el Rack de ESA área (si no, se trae al entrar)
     if(evento.area===areaActualId) trRefrescarVistaActual();

@@ -83,6 +83,8 @@ function authActualizarUI(){
     document.getElementById('authAvatar').textContent = authIniciales(u);
     document.getElementById('authRolActual').hidden = !authEsAdmin();
   }
+  // ajustes técnicos (dirección/clave del puente, simular el Rack): solo administradores
+  document.querySelectorAll('[data-solo-admin]').forEach(el=>{ el.hidden = !(logueado && authEsAdmin()); });
   if(typeof areaRefrescarPermisos==='function') areaRefrescarPermisos();
 }
 function authIniciales(nombre){
@@ -123,6 +125,7 @@ function authEntrar(areaPreferida){
   authActualizarUI();
   if(typeof trConectar==='function') trConectar();
   appMostrarApp(areaPrimeraVista(area));
+  if(typeof apActualizarBadge==='function') apActualizarBadge(); // pendientes de aprobar, en la pestaña
   return true;
 }
 

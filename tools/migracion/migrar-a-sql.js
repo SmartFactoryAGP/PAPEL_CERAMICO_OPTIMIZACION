@@ -39,6 +39,12 @@ const AREAS = require(path.join(RAIZ, 'js', 'core', 'areas-config.js'));
 const AREAS_CASILLAS = Object.values(AREAS.areas).filter(a=>a.rack.tipo==='casillas').map(a=>a.id);   // papel, mallas
 const AREAS_INVENTARIO = Object.values(AREAS.areas).filter(a=>a.rack.tipo==='inventario').map(a=>a.id); // tecoflex
 const TABLA_CASILLAS = { papel: 'Papel', mallas: 'Mallas' };
+const TABLA_INVENTARIO = { tecoflex: 'Tecoflex', mallas: 'Mallas', tejidos: 'Tejidos' }; // prefijo de las tablas de stock de cada área
+const porCodmat = a => !!AREAS.areas[a].rack.porCodmat;          // Mallas: stock por CodMat, sin medida
+/* columnas que identifican el material en las tablas de stock/líneas de cada área */
+const colsMaterial = a => porCodmat(a) ? ['CodMat', 'Descripcion'] : ['Material', 'MedidaMm'];
+const colsClave = a => porCodmat(a) ? ['CodMat'] : ['Material', 'MedidaMm'];
+const AREAS_APROBACION = Object.values(AREAS.areas).filter(a=>a.aprobacionZfer).map(a=>a.id); // papel (ZFER CURVE 02–04)
 const FILAS_POR_INSERT = 500; // SQL Server acepta hasta 1000 filas por INSERT … VALUES
 
 /* ---------- lectura y validación ---------- */
@@ -51,7 +57,7 @@ function leerJson(ruta, porDefecto){
 function cargar(dirDatos){
   if(!fs.existsSync(dirDatos)) throw new Error(`No existe la carpeta de datos: ${dirDatos}`);
   const avisos = [];
-  const d = { usuarios: [], permisos: [], casillas: {}, inventario: {}, avisos };
+  const d = { usuarios: [], permisos: [], casillas: {}, inventario: {}, aprobaciones: {}, avisos };
 
   // usuarios
   d.usuarios = leerJson(path.join(dirDatos, 'usuarios.json'), []);
@@ -77,11 +83,24 @@ function cargar(dirDatos){
     d.casillas[area] = { rack: filas, historial: hist };
   });
 
+  // aprobaciones de ZFER (papel): una ficha por ZFER con su historial
+  AREAS_APROBACION.forEach(area=>{
+    const fichas = leerJson(path.join(dirDatos, area, 'aprobaciones.json'), []);
+    const vistos = new Set();
+    fichas.forEach(f=>{ if(vistos.has(f.zfer)) avisos.push(`${area}: el ZFER ${f.zfer} aparece dos veces en aprobaciones.json`); vistos.add(f.zfer); });
+    d.aprobaciones[area] = {
+      fichas: fichas.map(f=>({ zfer: f.zfer, estado: f.estado, solicitadoPor: f.solicitadoPor||null, solicitadoEn: f.solicitadoEn, nota: f.nota||null,
+        detalle: f.detalle ? JSON.stringify(f.detalle) : null, resueltoPor: f.resueltoPor||null, resueltoEn: f.resueltoEn||null, motivo: f.motivo||null })),
+      historial: fichas.flatMap(f=>(f.historial||[]).map(h=>({ zfer: f.zfer, evento: h.evento, usuario: h.usuario||null, fecha: h.fecha, nota: h.nota||null })))
+    };
+  });
+
   // inventario por cantidad (tecoflex): el diario es la fuente de verdad
   AREAS_INVENTARIO.forEach(area=>{
     const conf = AREAS.areas[area];
-    const alias = new Map(); conf.materiales.forEach(m=>(m.alias||[]).forEach(a=>alias.set(a, m.id)));
-    const conocidos = new Set(conf.materiales.map(m=>m.id));
+    const alias = new Map(); (conf.materiales||[]).forEach(m=>(m.alias||[]).forEach(a=>alias.set(a, m.id)));
+    const conocidos = new Set((conf.materiales||[]).map(m=>m.id));
+    const nombres = new Map(); // por CodMat: la última descripción conocida
     const dir = path.join(dirDatos, area);
     let lineas = [];
     const rutaDiario = path.join(dir, 'movimientos.jsonl');
@@ -98,14 +117,16 @@ function cargar(dirDatos){
       if(idCliente) vistos.add(idCliente);
       const items = mv.items.map((l, j)=>{
         const material = alias.get(l.material) || l.material;
-        if(!conocidos.has(material)) avisos.push(`${area}: material desconocido "${l.material}" en el movimiento ${mv.id}`);
-        const k = material + '|' + l.medida;
+        if(!conf.rack.porCodmat && !conocidos.has(material)) avisos.push(`${area}: material desconocido "${l.material}" en el movimiento ${mv.id}`);
+        // (igual que el puente: una salida sin descripción no pisa la buena)
+        if(l.materialNombre && (l.materialNombre!==material || !nombres.has(material))) nombres.set(material, l.materialNombre);
+        const k = material + '|' + (l.medida||'');
         stock.set(k, (stock.get(k)||0) + (l.tipo==='entrada' ? l.cantidad : -l.cantidad));
-        return { linea: j+1, tipo: l.tipo, material, medida: l.medida, cantidad: l.cantidad };
+        return { linea: j+1, tipo: l.tipo, material, medida: l.medida||'', nombre: l.materialNombre||null, cantidad: l.cantidad };
       });
       movimientos.push({ id: i+1, idOrigen: mv.id || null, idCliente, usuario: mv.usuario||null, nota: mv.nota||null, fecha: mv.fecha, items });
     });
-    const stockLista = [...stock].filter(([, c])=>c!==0).map(([k, cantidad])=>{ const [material, medida] = k.split('|'); return { material, medida, cantidad }; });
+    const stockLista = [...stock].filter(([, c])=>c!==0).map(([k, cantidad])=>{ const [material, medida] = k.split('|'); return { material, medida, cantidad, nombre: nombres.get(material)||null }; });
     stockLista.filter(s=>s.cantidad<0).forEach(s=>avisos.push(`${area}: stock NEGATIVO ${s.material} ${s.medida} mm = ${s.cantidad} (no debería pasar; revisar antes de migrar)`));
     // la foto legible debería coincidir con lo que da el diario
     const foto = leerJson(path.join(dir, 'inventario.json'), null);
@@ -124,6 +145,7 @@ function cargar(dirDatos){
 function totales(d){
   const t = { usuarios: d.usuarios.length, permisos: d.permisos.length };
   AREAS_CASILLAS.forEach(a=>{ t[a+'Rack'] = d.casillas[a].rack.length; t[a+'Historial'] = d.casillas[a].historial.length; });
+  AREAS_APROBACION.forEach(a=>{ t[a+'Aprobaciones'] = d.aprobaciones[a].fichas.length; t[a+'AprobacionesHistorial'] = d.aprobaciones[a].historial.length; });
   AREAS_INVENTARIO.forEach(a=>{
     const inv = d.inventario[a];
     t[a+'Movimientos'] = inv.movimientos.length;
@@ -162,7 +184,8 @@ function generarSql(d, opciones){
   s.push(`   Totales: ${JSON.stringify(t)} */`);
   s.push('SET XACT_ABORT ON;  -- cualquier error deshace TODO', 'SET NOCOUNT ON;', 'BEGIN TRANSACTION;');
   const tablas = ['rack.Usuarios', 'rack.Permisos', ...AREAS_CASILLAS.flatMap(a=>[`rack.${TABLA_CASILLAS[a]}Rack`, `rack.${TABLA_CASILLAS[a]}Historial`]),
-                  'rack.TecoflexStock', 'rack.TecoflexMovimientos', 'rack.TecoflexMovimientoLineas'];
+                  ...AREAS_APROBACION.flatMap(a=>[`rack.${TABLA_CASILLAS[a]}AprobacionesZfer`, `rack.${TABLA_CASILLAS[a]}AprobacionesZferHistorial`]),
+                  ...AREAS_INVENTARIO.flatMap(a=>['Stock', 'Movimientos', 'MovimientoLineas'].map(x=>`rack.${TABLA_INVENTARIO[a]}${x}`))];
   s.push(`IF ${tablas.map(x=>`EXISTS (SELECT 1 FROM ${x})`).join(' OR ')}\n  THROW 50001, N'Las tablas destino ya tienen datos: la migración ya se hizo (o hay datos de prueba). No se hizo nada.', 1;`);
 
   s.push('\n-- usuarios y permisos');
@@ -179,18 +202,29 @@ function generarSql(d, opciones){
       c.historial.map(h=>[txt(h.orden), txt(h.ubicacion), txt(h.evento), txt(h.usuario), fechaCo(h.fecha)])));
   });
 
+  AREAS_APROBACION.forEach(a=>{
+    const T = TABLA_CASILLAS[a], ap = d.aprobaciones[a];
+    s.push(`\n-- aprobaciones de ZFER de ${AREAS.areas[a].nombre} (CURVE 02–04 que llevan papel)`);
+    if(ap.fichas.length) s.push(inserts(`rack.${T}AprobacionesZfer`, ['Zfer', 'Estado', 'SolicitadoPor', 'SolicitadoEn', 'Nota', 'Detalle', 'ResueltoPor', 'ResueltoEn', 'Motivo'],
+      ap.fichas.map(f=>[txt(f.zfer), txt(f.estado), txt(f.solicitadoPor), fechaCo(f.solicitadoEn), txt(f.nota), txt(f.detalle), txt(f.resueltoPor), fechaCo(f.resueltoEn), txt(f.motivo)])));
+    if(ap.historial.length) s.push(inserts(`rack.${T}AprobacionesZferHistorial`, ['Zfer', 'Evento', 'Usuario', 'Fecha', 'Nota'],
+      ap.historial.map(h=>[txt(h.zfer), txt(h.evento), txt(h.usuario), fechaCo(h.fecha), txt(h.nota)])));
+  });
+
   AREAS_INVENTARIO.forEach(a=>{
-    const inv = d.inventario[a];
+    const inv = d.inventario[a], T = `rack.${TABLA_INVENTARIO[a]}`;
+    // Tecoflex: material + medida; Mallas: CodMat + descripción
+    const valMaterial = x => porCodmat(a) ? [txt(x.material), txt(x.nombre)] : [txt(x.material), txt(x.medida)];
     s.push(`\n-- inventario de ${AREAS.areas[a].nombre}: movimientos (con el mismo orden que en el diario), sus líneas y el stock`);
     if(inv.movimientos.length){
-      s.push('SET IDENTITY_INSERT rack.TecoflexMovimientos ON;');
-      s.push(inserts('rack.TecoflexMovimientos', ['Id', 'IdOrigen', 'IdCliente', 'Usuario', 'Nota', 'Fecha'],
+      s.push(`SET IDENTITY_INSERT ${T}Movimientos ON;`);
+      s.push(inserts(`${T}Movimientos`, ['Id', 'IdOrigen', 'IdCliente', 'Usuario', 'Nota', 'Fecha'],
         inv.movimientos.map(m=>[num(m.id), txt(m.idOrigen), txt(m.idCliente), txt(m.usuario), txt(m.nota), fechaCo(m.fecha)])));
-      s.push('SET IDENTITY_INSERT rack.TecoflexMovimientos OFF;');
-      s.push(inserts('rack.TecoflexMovimientoLineas', ['MovimientoId', 'Linea', 'Tipo', 'Material', 'MedidaMm', 'Cantidad'],
-        inv.movimientos.flatMap(m=>m.items.map(l=>[num(m.id), num(l.linea), txt(l.tipo), txt(l.material), txt(l.medida), num(l.cantidad)]))));
+      s.push(`SET IDENTITY_INSERT ${T}Movimientos OFF;`);
+      s.push(inserts(`${T}MovimientoLineas`, ['MovimientoId', 'Linea', 'Tipo', ...colsMaterial(a), 'Cantidad'],
+        inv.movimientos.flatMap(m=>m.items.map(l=>[num(m.id), num(l.linea), txt(l.tipo), ...valMaterial(l), num(l.cantidad)]))));
     }
-    if(inv.stock.length) s.push(inserts('rack.TecoflexStock', ['Material', 'MedidaMm', 'Cantidad'], inv.stock.map(x=>[txt(x.material), txt(x.medida), num(x.cantidad)])));
+    if(inv.stock.length) s.push(inserts(`${T}Stock`, [...colsMaterial(a), 'Cantidad'], inv.stock.map(x=>[...valMaterial(x), num(x.cantidad)])));
   });
 
   s.push('\n-- verificación: si algo no cuadra, se deshace todo');
@@ -200,16 +234,21 @@ function generarSql(d, opciones){
     s.push(verificar(`SELECT COUNT(*) FROM rack.${TABLA_CASILLAS[a]}Rack`, t[a+'Rack'], `órdenes en el rack de ${a}`));
     s.push(verificar(`SELECT COUNT(*) FROM rack.${TABLA_CASILLAS[a]}Historial`, t[a+'Historial'], `historial de ${a}`));
   });
+  AREAS_APROBACION.forEach(a=>{
+    s.push(verificar(`SELECT COUNT(*) FROM rack.${TABLA_CASILLAS[a]}AprobacionesZfer`, t[a+'Aprobaciones'], `aprobaciones de ZFER de ${a}`));
+    s.push(verificar(`SELECT COUNT(*) FROM rack.${TABLA_CASILLAS[a]}AprobacionesZferHistorial`, t[a+'AprobacionesHistorial'], `historial de aprobaciones de ${a}`));
+  });
   AREAS_INVENTARIO.forEach(a=>{
-    s.push(verificar('SELECT COUNT(*) FROM rack.TecoflexMovimientos', t[a+'Movimientos'], 'movimientos de Tecoflex'));
-    s.push(verificar('SELECT COUNT(*) FROM rack.TecoflexMovimientoLineas', t[a+'Lineas'], 'líneas de movimientos de Tecoflex'));
-    s.push(verificar('SELECT ISNULL(SUM(Cantidad),0) FROM rack.TecoflexStock', t[a+'StockUnidades'], 'unidades en stock de Tecoflex'));
+    const T = `rack.${TABLA_INVENTARIO[a]}`, nom = AREAS.areas[a].nombre, k = colsClave(a);
+    s.push(verificar(`SELECT COUNT(*) FROM ${T}Movimientos`, t[a+'Movimientos'], `movimientos de ${nom}`));
+    s.push(verificar(`SELECT COUNT(*) FROM ${T}MovimientoLineas`, t[a+'Lineas'], `líneas de movimientos de ${nom}`));
+    s.push(verificar(`SELECT ISNULL(SUM(Cantidad),0) FROM ${T}Stock`, t[a+'StockUnidades'], `unidades en stock de ${nom}`));
     // el stock tiene que ser exactamente la suma de entradas menos salidas
     s.push(verificar(`SELECT COUNT(*) FROM (
-    SELECT Material, MedidaMm, SUM(CASE Tipo WHEN 'entrada' THEN Cantidad ELSE -Cantidad END) AS Neto
-    FROM rack.TecoflexMovimientoLineas GROUP BY Material, MedidaMm HAVING SUM(CASE Tipo WHEN 'entrada' THEN Cantidad ELSE -Cantidad END) <> 0
-  ) m FULL JOIN rack.TecoflexStock s ON s.Material = m.Material AND s.MedidaMm = m.MedidaMm
-  WHERE ISNULL(m.Neto,0) <> ISNULL(s.Cantidad,0)`, 0, 'el stock de Tecoflex no coincide con sus movimientos'));
+    SELECT ${k.join(', ')}, SUM(CASE Tipo WHEN 'entrada' THEN Cantidad ELSE -Cantidad END) AS Neto
+    FROM ${T}MovimientoLineas GROUP BY ${k.join(', ')} HAVING SUM(CASE Tipo WHEN 'entrada' THEN Cantidad ELSE -Cantidad END) <> 0
+  ) m FULL JOIN ${T}Stock s ON ${k.map(c=>`s.${c} = m.${c}`).join(' AND ')}
+  WHERE ISNULL(m.Neto,0) <> ISNULL(s.Cantidad,0)`, 0, `el stock de ${nom} no coincide con sus movimientos`));
   });
   s.push(`\n${final} TRANSACTION;`);
   if(final==='COMMIT') s.push(`PRINT N'Migración completa: ${Object.entries(t).map(([k, v])=>k+'='+v).join(', ')}';`);

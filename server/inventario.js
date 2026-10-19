@@ -25,6 +25,7 @@ const path = require('path');
 const crypto = require('crypto');
 const { leerListaJson, escribirListaJson } = require('./archivos');
 const { errorHttp, esHoy } = require('./comun');
+const { codmatCorto } = require('./reglas-mallas');
 
 const MAX_CANTIDAD = 100000;
 const MAX_LINEAS = 500;
@@ -44,9 +45,26 @@ function aplicarAlStock(stock, items){
 }
 function stockComoLista(inv){
   const lista = [];
-  inv.stock.forEach((cantidad, k)=>{ if(cantidad>0){ const [material, medida] = k.split('|'); lista.push({material, medida, cantidad}); } });
+  inv.stock.forEach((cantidad, k)=>{
+    if(cantidad<=0) return;
+    const [material, medida] = k.split('|');
+    // por CodMat (Mallas) no hay lista fija de materiales: va la descripción
+    lista.push(inv.nombres ? {material, medida, cantidad, nombre: inv.nombres.get(material) || material} : {material, medida, cantidad});
+  });
   return lista;
 }
+/* Stock por material, en unidades (lo usa la Lista de corte de Mallas). */
+function stockPorMaterial(inv){
+  const m = new Map();
+  inv.stock.forEach((cantidad, k)=>{ if(cantidad>0){ const mat = k.split('|')[0]; m.set(mat, (m.get(mat)||0) + cantidad); } });
+  return m;
+}
+/* La descripción de cada CodMat: la última REAL (una salida escaneada no
+   trae descripción y llega con el CodMat como nombre: no pisa la buena). */
+const recordarNombres = (inv, items) => {
+  if(!inv.nombres) return;
+  items.forEach(l=>{ if(l.materialNombre && (l.materialNombre!==l.material || !inv.nombres.has(l.material))) inv.nombres.set(l.material, l.materialNombre); });
+};
 /* Totales de HOY sobre TODOS los movimientos del día (no solo los últimos
    300). Recorre desde el final hasta el primer movimiento de ayer. */
 function totalesDeHoy(inv){
@@ -62,6 +80,15 @@ function totalesDeHoy(inv){
 function lineaInventario(area, it, i){
   const n = `línea ${i+1}`;
   if(!it || (it.tipo!=='entrada' && it.tipo!=='salida')) return {error:`${n}: tipo inválido (entrada o salida)`};
+  if(area.rack.porCodmat){
+    // Mallas: stock por Desenho_CodMat (sale de SQL, no hay lista fija) y sin medida
+    const codmat = codmatCorto(it.material);
+    if(!/^\d{1,18}$/.test(codmat)) return {error:`${n}: CodMat inválido "${String(it.material).slice(0, 20)}"`};
+    const cantidad = Number(it.cantidad);
+    if(!Number.isInteger(cantidad) || cantidad<=0 || cantidad>MAX_CANTIDAD) return {error:`${n}: cantidad inválida "${String(it.cantidad).slice(0, 20)}" (entero de 1 a ${MAX_CANTIDAD})`};
+    const nombre = String(it.descripcion || it.materialNombre || '').trim().slice(0, 120) || codmat;
+    return {linea:{tipo:it.tipo, material:codmat, materialNombre:nombre, codigo:codmat, medida:'', cantidad}};
+  }
   const mat = area.materiales.find(m=>m.id===it.material || (m.alias||[]).includes(it.material));
   if(!mat) return {error:`${n}: material desconocido "${String(it.material).slice(0, 40)}"`};
   const medida = String(it.medida==null?'':it.medida).trim().replace('.', ',');
@@ -89,11 +116,11 @@ function crear({ datos, notificar }){
       fs.renameSync(viejo, viejo + '.migrado');
       console.log(`[inventario] ${area.id}: ${lista.length} movimiento(s) migrados a ${path.basename(diario)}`);
     }
-    inv = {version:0, stock:new Map(), movimientos:[], porIdCliente:new Map()};
+    inv = {version:0, stock:new Map(), movimientos:[], porIdCliente:new Map(), nombres: area.rack.porCodmat ? new Map() : null};
     // claves viejas de material -> la actual (campo "alias" en areas-config.js).
     // El diario NO se reescribe: la traducción es solo en memoria.
     const alias = new Map();
-    area.materiales.forEach(m=>(m.alias||[]).forEach(a=>alias.set(a, m)));
+    (area.materiales||[]).forEach(m=>(m.alias||[]).forEach(a=>alias.set(a, m)));
     const normalizar = items => items.forEach(l=>{
       const m = alias.get(l.material);
       if(m){ l.material = m.id; l.materialNombre = m.nombre; l.codigo = m.codigo||null; }
@@ -109,14 +136,16 @@ function crear({ datos, notificar }){
         let mv; try { mv = JSON.parse(t); } catch(e){ malas++; return; } // p.ej. una línea cortada por un apagón
         normalizar(mv.items);
         aplicarAlStock(inv.stock, mv.items);
+        recordarNombres(inv, mv.items);
         inv.movimientos.push(mv);
         if(mv.idCliente) inv.porIdCliente.set(mv.idCliente, mv);
       });
       if(malas) console.error(`[inventario] ${area.id}: ${malas} línea(s) ilegibles en ${path.basename(diario)} — se saltearon`);
     }
     // stock de un material que ya no está en la lista: no se esconde, se avisa
-    const conocidos = new Set(area.materiales.map(m=>m.id));
-    const huerfanos = [...new Set([...inv.stock.keys()].map(k=>k.split('|')[0]).filter(m=>!conocidos.has(m)))];
+    // (por CodMat no hay lista fija: cualquier CodMat es válido)
+    const conocidos = new Set((area.materiales||[]).map(m=>m.id));
+    const huerfanos = area.rack.porCodmat ? [] : [...new Set([...inv.stock.keys()].map(k=>k.split('|')[0]).filter(m=>!conocidos.has(m)))];
     if(huerfanos.length) console.error(`[inventario] ${area.id}: hay stock de material(es) que no están en js/core/areas-config.js: ${huerfanos.join(', ')} — agregalos ahí (o como "alias" del material correcto)`);
     inv.version = inv.movimientos.length;
     inventarios.set(area.id, inv);
@@ -182,7 +211,7 @@ function crear({ datos, notificar }){
       const hay = inv.stock.get(k)||0;
       if(hay + delta < 0){
         const l = lineas.find(x=>invClave(x.material, x.medida)===k);
-        faltantes.push(`${l.materialNombre} ${l.medida} mm: hay ${hay}, salen ${saleTotal.get(k)}`);
+        faltantes.push(`${l.materialNombre}${l.medida ? ` ${l.medida} mm` : ` (${l.material})`}: hay ${hay}, salen ${saleTotal.get(k)}`);
       }
     });
     if(faltantes.length) return { status: 409, cuerpo: { error: 'No alcanza el stock — no se registró nada.', detalles: faltantes, version: inv.version } };
@@ -199,6 +228,7 @@ function crear({ datos, notificar }){
     // en memoria no se toca); después la memoria; la foto del stock al final
     fs.appendFileSync(diarioPath(area), JSON.stringify(movimiento) + '\n', 'utf8');
     aplicarAlStock(inv.stock, lineas);
+    recordarNombres(inv, lineas);
     inv.movimientos.push(movimiento);
     if(idCliente) inv.porIdCliente.set(idCliente, movimiento);
     inv.version++;
@@ -208,7 +238,7 @@ function crear({ datos, notificar }){
     return { status: 200, cuerpo: { ok: true, version: inv.version, movimiento, stock, hoy } };
   }
 
-  return { de, consultar, registrar };
+  return { de, consultar, registrar, stockPorMaterial: area => stockPorMaterial(de(area)), version: area => de(area).version };
 }
 
 module.exports = { crear };

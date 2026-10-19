@@ -5,8 +5,9 @@
    administrador y elegir qué vistas puede ver cada uno en cada área.
    Todo se valida de nuevo en el puente (server/usuarios.js): esta
    pantalla es solo la forma cómoda de pedirlo. */
-const USR_NOMBRES_VISTA = {ordenes:'Lista de corte', nesting:'Nesting', rack:'Rack', repair:'Editor de archivos'};
-const USR_ORDEN_VISTAS = ['ordenes','nesting','rack','repair'];
+const USR_NOMBRES_VISTA = {ordenes:'Lista de corte', nesting:'Nesting', rack:'Rack', repair:'Editor de archivos',
+  aprobaciones:'Aprobaciones (pedir)', aprobar:'Aprobar ZFER'};
+const USR_ORDEN_VISTAS = ['ordenes','nesting','rack','repair','aprobaciones','aprobar'];
 let usrLista = [];
 let usrEditando = null;   // nombre del usuario abierto en el editor; null = creando uno nuevo
 

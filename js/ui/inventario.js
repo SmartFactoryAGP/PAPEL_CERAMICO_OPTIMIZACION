@@ -100,7 +100,7 @@ async function invRender(silencioso){
    o por la respuesta a un "Registrar" de esta misma. Puede llegar el mismo
    cambio por los dos lados y en cualquier orden: la versión lo ordena. */
 function invAplicarResultado(r){
-  if(areaActual().rack.tipo!=='inventario' || r.area && r.area!==areaActualId) return;
+  if(areaActual().rack.tipo!=='inventario' || areaActual().rack.porCodmat || r.area && r.area!==areaActualId) return; // Mallas: mallas.js
   if(invVersion<0 || r.version<=invVersion) return;       // todavía nada cargado, o ya aplicado
   if(r.version!==invVersion+1){ invRender(true); return; } // se perdió algún cambio en el medio
   invStock = new Map((r.stock||[]).map(s=>[invClave(s.material, s.medida), s.cantidad]));
