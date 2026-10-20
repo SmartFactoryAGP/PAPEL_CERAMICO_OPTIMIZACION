@@ -30,12 +30,15 @@ const MS_COLUMNAS = [
   {campo:'Cantidad', etiqueta:'Cantidad'}, {campo:'Cubierto', etiqueta:'Con stock'}, {campo:'Falta', etiqueta:'Falta'},
   {campo:'Vehiculo', etiqueta:'Vehículo'},
 ];
+/* Tejidos (rack por posiciones) suma el Tamaño, que decide en qué posición entra */
+const msColumnas = () => areaActual().rack.tipo==='posiciones'
+  ? [MS_COLUMNAS[0], MS_COLUMNAS[1], {campo:'Tamano', etiqueta:'Tamaño'}, ...MS_COLUMNAS.slice(2)] : MS_COLUMNAS;
 const MS_GRUPOS = [
   { id: 'liberadas', titulo: 'Liberadas', nota: 'órdenes ya liberadas a producción' },
   { id: 'planeacion', titulo: 'En planeación', nota: 'órdenes todavía no liberadas' },
 ];
 // orden del proceso, para el resumen por puesto (Planeación al final)
-const MS_ORDEN_PUESTOS = ['01CORTE','02CNC','03SERIG','04SER_VT','05EMPLA','06CURVAD','07RECORT','08PULIDO','09IOX_E','09IOX_S','11ZUND','12P_ENSA','PLANEACION'];
+const MS_ORDEN_PUESTOS = ['01CORTE','02CNC','03SERIG','04SER_TT','04SER_VT','05EMPAL','06CURVAD','07RECORT','08PULIDO','09IOX_E','09IOX_S','11ZUND','12P_ENSA','PLANEACION'];
 const msEsMallas = () => !!areaActual().rack.porCodmat;
 const msNuevoId = () => { const b = new Uint8Array(12); crypto.getRandomValues(b); return Array.from(b, x=>x.toString(16).padStart(2,'0')).join(''); };
 /* lo que escanea la pistola: el CodMat del sticker (con o sin los 9 ceros de SAP) */
@@ -57,7 +60,7 @@ function msAgrupado(){
     const grupo = msEsPlaneacion(f.Puestodetrabajo) ? 'planeacion' : 'liberadas';
     const clave = f.CodMat + '|' + grupo;
     let g = grupos.get(clave);
-    if(!g){ g = { clave, grupo, CodMat: f.CodMat, Descricao: f.Descricao, Cantidad: 0, Cubierto: 0, Falta: 0, vehiculos: new Set(), ordenes: [], puestos: [] }; grupos.set(clave, g); }
+    if(!g){ g = { clave, grupo, CodMat: f.CodMat, Descricao: f.Descricao, Tamano: f.Tamano || '', Cantidad: 0, Cubierto: 0, Falta: 0, vehiculos: new Set(), ordenes: [], puestos: [] }; grupos.set(clave, g); }
     g.Cantidad += f.Cantidad; g.Cubierto += f.Cubierto; g.Falta += f.Falta;
     String(f.Vehiculo||'').split(' · ').filter(Boolean).forEach(v=>g.vehiculos.add(v));
     g.ordenes.push(...(f.ordenes||[]));
@@ -90,10 +93,15 @@ function msRenderLista(){
   document.getElementById('ordCount').textContent = filtro ? `${ordenadas.length} de ${todas.length}` : String(todas.length);
   if(!ordenadas.length){ wrap.innerHTML = '<div class="empty">Ninguna fila coincide con la búsqueda.</div>'; return; }
   const enCarrito = new Set(msEntrada.map(l=>l.codmat));
+  const conTamano = areaActual().rack.tipo==='posiciones', columnas = msColumnas();
+  const celdaTamano = f => !conTamano ? '' : `<td>${f.Tamano
+    ? `<span class="tjTam">${escapeHtml(f.Tamano)}</span>`
+    : `<button type="button" class="linkBtn tjAsignar" data-asignar="${escapeHtml(f.CodMat)}" title="Este tejido no tiene tamaño: elegilo para poder darle entrada">Asignar</button>`}</td>`;
   const fila = f=>`
     <tr class="msFila${f.Falta ? '' : ' msCubierta'}${enCarrito.has(f.CodMat) ? ' msElegida' : ''}" data-clave="${escapeHtml(f.clave)}" title="${escapeHtml(f.Ordenes + ' orden(es) · ' + f.puestos.join(' · '))}">
       <td>${escapeHtml(f.CodMat)}</td>
       <td class="msDesc">${escapeHtml(f.Descricao||'—')}</td>
+      ${celdaTamano(f)}
       <td class="num">${msNum(f.Cantidad)}</td>
       <td class="num">${f.Cubierto ? msNum(f.Cubierto) : '—'}</td>
       <td class="num"><b class="${f.Falta ? 'msFalta' : 'msOk'}">${f.Falta ? msNum(f.Falta) : '✓ cubierto'}</b></td>
@@ -105,11 +113,11 @@ function msRenderLista(){
     const del = ordenadas.filter(f=>f.grupo===g.id);
     if(!del.length) return '';
     const falta = del.reduce((s, f)=>s + f.Falta, 0);
-    return `<tbody class="msGrupo ${g.id}"><tr class="msGrupoHead"><td colspan="${MS_COLUMNAS.length + 1}">
+    return `<tbody class="msGrupo ${g.id}"><tr class="msGrupoHead"><td colspan="${columnas.length + 1}">
       <b>${g.titulo}</b> <span>${g.nota} · ${del.length} material${del.length===1?'':'es'} · faltan ${msNum(falta)}</span></td></tr>
       ${del.map(fila).join('')}</tbody>`;
   }).join('');
-  wrap.innerHTML = `<table class="ordTable msTabla"><thead><tr>${MS_COLUMNAS.map(ordEncabezadoOrdenable).join('')}<th></th></tr></thead>${cuerpo}</table>`;
+  wrap.innerHTML = `<table class="ordTable msTabla"><thead><tr>${columnas.map(ordEncabezadoOrdenable).join('')}<th></th></tr></thead>${cuerpo}</table>`;
   // la columna "Falta" del Rack sale de esta misma lista
   if(typeof appVistaActual!=='undefined' && appVistaActual==='rack') msDibujarStock();
 }
@@ -333,10 +341,40 @@ function msSumarSalida(codmat){
 
 /* ---------------- eventos ---------------- */
 document.getElementById('ordTableWrap').addEventListener('click', ev=>{
-  if(!msEsMallas()) return;
+  if(!areaActual().listaPorCodmat) return;
+  // Tejidos: "Asignar" elige el tamaño del tejido (sin tamaño no se le puede dar entrada)
+  const asignar = ev.target.closest('[data-asignar]');
+  if(asignar){ msAsignarTamano(asignar); return; }
+  if(ev.target.closest('.tjTamSel')) return;
   const tr = ev.target.closest('tr.msFila');
-  if(tr) msElegirFila(tr.getAttribute('data-clave'));
+  if(!tr) return;
+  const f = msAgrupado().find(x=>x.clave===tr.getAttribute('data-clave'));
+  // Tejidos se ingresan uno a uno en el Rack (con foto): tocar la fila lleva ahí, con el tejido elegido
+  if(areaActual().rack.tipo==='posiciones'){ if(f && typeof tjIrAEntrada==='function') tjIrAEntrada(f.CodMat, f.Descricao); return; }
+  if(msEsMallas()) msElegirFila(tr.getAttribute('data-clave'));
 });
+/* "Asignar" tamaño (P, G, XG) a un tejido de la Lista de corte que no lo tiene. */
+function msAsignarTamano(btn){
+  const codmat = btn.getAttribute('data-asignar');
+  const f = msAgrupado().find(x=>x.CodMat===codmat) || {};
+  const td = btn.closest('td');
+  td.innerHTML = `<select class="tjTamSel" aria-label="Tamaño de ${escapeHtml(codmat)}"><option value="">Tamaño…</option>${
+    (areaActual().rack.tamanos||[]).map(t=>`<option value="${t}">${t}</option>`).join('')}</select>`;
+  const sel = td.querySelector('select');
+  sel.focus();
+  sel.addEventListener('change', async ()=>{
+    if(!sel.value) return;
+    sel.disabled = true;
+    try {
+      const res = await fetch(ordBridgeUrl()+'/api/tejidos/tamano', { method: 'PUT', headers: ordApiHeaders({'Content-Type':'application/json'}),
+        body: JSON.stringify({ codmat, tamano: sel.value, nombre: f.Descricao }) });
+      const data = await res.json().catch(()=>({}));
+      if(!res.ok) throw new Error(data.error || ('HTTP '+res.status));
+      await ordRefrescar({ auto: true }); // la lista ya la trae con su tamaño (aviso en vivo a las demás PCs)
+    } catch(e){ alert('No se pudo asignar el tamaño: ' + e.message); msRenderLista(); }
+  });
+  sel.addEventListener('blur', ()=>{ if(!sel.disabled && !sel.value) msRenderLista(); });
+}
 ['entrada', 'salida'].forEach(tipo=>{
   const [idLista, , idVaciar, idBtn] = MS_CARRITO[tipo].ids;
   document.getElementById(idLista).addEventListener('change', ev=>{ if(ev.target.classList.contains('msCant')) msCambiarCantidad(tipo, +ev.target.getAttribute('data-i'), ev.target.value); });
@@ -372,6 +410,7 @@ document.getElementById('msStockWrap').addEventListener('click', async ev=>{
 const msCarritosPorArea = {};
 let msCarritosDe = areaActualId;
 alCambiarArea(()=>{
+  msAgrupadoCache = { de: null, filas: [] };
   msCarritosPorArea[msCarritosDe] = { entrada: msEntrada, salida: msSalida, lotes: msLotes };
   const g = msCarritosPorArea[areaActualId] || { entrada: [], salida: [], lotes: { entrada: null, salida: null } };
   msEntrada = g.entrada; msSalida = g.salida; msLotes = g.lotes; msCarritosDe = areaActualId;

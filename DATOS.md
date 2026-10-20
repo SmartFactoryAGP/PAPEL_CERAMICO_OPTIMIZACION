@@ -23,9 +23,12 @@ server/datos/
 ├── mallas/
 │   ├── movimientos.jsonl      diario de entradas y salidas por CodMat (fuente de verdad)
 │   └── inventario.json        stock actual por CodMat
-├── tejidos/                  igual que mallas (PVTE, PUTE, tejido), stock propio
-│   ├── movimientos.jsonl
-│   └── inventario.json
+├── tejidos/                  rack por POSICIÓN (A1.1, B12.1…): una pieza por posición
+│   ├── posiciones.json        el rack físico: cada posición con su tamaño (P, G, XG)
+│   ├── tamanos.json           tamaño, vehículo y geometría de cada tejido por CodMat (del Excel + "Asignar")
+│   ├── ocupacion.json         qué tejido hay hoy en cada posición (responsables, resistencias, vehículo…)
+│   ├── historial.jsonl        entradas, salidas y tamaños asignados: solo se agrega, nunca se borra (pestaña "Historial")
+│   └── fotos/                 la foto del calentamiento de cada entrada (NO va al respaldo diario)
 ├── tecoflex/
 │   ├── movimientos.jsonl      diario de entradas y salidas (fuente de verdad)
 │   └── inventario.json        stock actual por material y medida
@@ -37,7 +40,8 @@ server/datos/
 - **Cómo se guarda:**
   - Papel cerámico se maneja **por orden**: cada orden ocupa una casilla.
   - Tecoflex se maneja **por cantidad**: stock por material y medida, con entradas y salidas.
-  - Mallas y Tejidos se manejan **por cantidad y por CodMat**, cada uno con su propio stock: entra lo fabricado (un sticker por malla) y sale lo usado. Ese stock se descuenta de lo que pide la Lista de corte.
+  - Tejidos se maneja **por posición**: cada tejido entra solo a una posición libre de su tamaño (o una más grande), con foto del calentamiento, responsables y resistencias. Las fotos se guardan en `tejidos/fotos/` y **no** entran en el respaldo diario (copiarlas 30 veces llenaría el disco): incluí esa carpeta en el respaldo de red de la empresa.
+  - Mallas se maneja **por cantidad y por CodMat**, con su propio stock: entra lo fabricado (un sticker por malla) y sale lo usado. Ese stock se descuenta de lo que pide la Lista de corte.
 - **Trazabilidad:** todo movimiento queda registrado con **quién** lo hizo y **cuándo**. Nadie puede usar la app sin usuario.
 - **Formato:** archivos de texto JSON, legibles con cualquier editor. Se pueden abrir para auditoría.
 

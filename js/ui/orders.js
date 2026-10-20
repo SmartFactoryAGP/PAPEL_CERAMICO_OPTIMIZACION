@@ -314,7 +314,7 @@ function ordFilasVisibles(){
 function ordRenderTabla(){
   // Mallas: la lista va agrupada por CodMat y puesto, y lo que se elige va
   // a "Entrada al rack" en vez de a un lote (ver mallas.js)
-  if(areaActual().rack.porCodmat && typeof msRenderLista==='function') return msRenderLista();
+  if(areaActual().listaPorCodmat && typeof msRenderLista==='function') return msRenderLista();
   const wrap = document.getElementById('ordTableWrap');
   if(!ordenesPendientes.length){
     document.getElementById('ordCount').textContent = '0';
@@ -359,7 +359,7 @@ document.getElementById('ordBuscarInput').addEventListener('input', ()=>{
 /* Arma la tabla del "Lote actual" (las que agregaste con "+ Lote"). Si
    ya se corrió "Ejecutar", muestra si cada una quedó ubicada o no. */
 function ordRenderLote(){
-  if(areaActual().rack.porCodmat) return; // Mallas no arma lotes (ver mallas.js)
+  if(areaActual().listaPorCodmat) return; // Mallas y Tejidos no arman lotes (ver mallas.js)
   const wrap = document.getElementById('ordLoteWrap');
   if(!ordEnLoteIds.size){
     wrap.innerHTML = '<div class="empty">Todavía no agregaste ninguna orden al lote.</div>';
@@ -631,9 +631,9 @@ document.getElementById('ordCodigoLoteInput').addEventListener('keydown', ev=>{
 async function ordDescargarExcel(){
   const area = areaActual(), btn = document.getElementById('ordExcelBtn');
   let columnas, filas;
-  if(area.rack.porCodmat){
+  if(area.listaPorCodmat){
     // + "Grupo" (Liberadas / En planeación), que en pantalla va como encabezado de cada grupo
-    columnas = [{campo:'Grupo', etiqueta:'Grupo'}, ...MS_COLUMNAS].map(c=>({ ...c, numero: ['Cantidad', 'Cubierto', 'Falta'].includes(c.campo) }));
+    columnas = [{campo:'Grupo', etiqueta:'Grupo'}, ...msColumnas()].map(c=>({ ...c, numero: ['Cantidad', 'Cubierto', 'Falta'].includes(c.campo) }));
     filas = msFilasVisibles().map(f=>columnas.map(c=>f[c.campo]));
   } else {
     columnas = ordColumnas();
@@ -975,6 +975,8 @@ async function rackReingresar(ordenSerial, ubicacion){
 async function rackRender(silencioso){
   // Tecoflex: inventario por material y medida (inventario.js); Mallas: stock por CodMat (mallas.js)
   if(areaActual().rack.tipo==='inventario') return areaActual().rack.porCodmat ? msRackRender(silencioso) : invRender(silencioso);
+  // Tejidos: una pieza por posición, con foto (tejidos.js)
+  if(areaActual().rack.tipo==='posiciones') return tjRender(silencioso);
   const wrap = document.getElementById('rackWrap');
   const sim = ordRackEsSimulado();
   const areaPedida = areaActualId;

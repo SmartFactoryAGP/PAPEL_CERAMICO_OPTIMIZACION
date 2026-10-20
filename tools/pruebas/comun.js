@@ -106,6 +106,15 @@ async function abrirChrome(puertoDebug){
           document.getElementById('authClaveInput').value=${JSON.stringify(clave)}; document.getElementById('authLoginConfirmBtn').click(); 1`);
         await sleep(1200);
       };
+      // un toque de dedo de verdad (eventos táctiles, como en el celular) en el centro del elemento
+      p.toque = async selector=>{
+        const c = await p.ev(`(()=>{ const e=document.querySelector(${JSON.stringify(selector)}); if(!e) return null; e.scrollIntoView({block:'center'}); const r=e.getBoundingClientRect(); return { x: r.left + r.width/2, y: r.top + r.height/2 }; })()`);
+        if(!c) throw new Error('no existe ' + selector);
+        await sleep(150);
+        await p.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: c.x, y: c.y }] });
+        await sleep(60);
+        await p.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+      };
       p.captura = async archivo=>{ const r = await p.send('Page.captureScreenshot', { format: 'png' }); fs.writeFileSync(archivo, Buffer.from(r.result.data, 'base64')); };
       return p;
     },

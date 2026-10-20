@@ -17,6 +17,11 @@ function responder(texto, params){
     const pedidas = new Set(valores(params, 'cal'));
     return d.calendario.filter(c=>pedidas.has(s(c.orden))).map(c=>({ orden: c.orden, puesto: c.puesto, zfer: c.zfer, planCurve: c.planCurve, nivel: c.nivel, vehiculo: c.vehiculo }));
   }
+  if(valores(params, 'fk').length){ // nombre correcto de componentes (ODATA_Fullkit), por código con o sin ceros
+    if(d.fullkitCaido) throw new Error('sql-falso: ODATA_Fullkit no responde (simulado)');
+    const buscados = new Set([...valores(params, 'fk'), ...valores(params, 'fs')]);
+    return (d.fullkit||[]).filter(x=>buscados.has(s(x.COMPONENTE))).map(x=>({ codigo: x.COMPONENTE, nombre: x.DESCRIP_COMPONENTE }));
+  }
   if(valores(params, 'zfer').length){ // órdenes por ZFER (X5 y aprobados)
     const z = new Set(valores(params, 'zfer'));
     return d.calendario.filter(c=>z.has(s(c.zfer))).map(c=>({ orden: c.orden }));
@@ -30,9 +35,11 @@ function responder(texto, params){
       let c = {}; try { c = JSON.parse(fs.readFileSync(process.env.FAKE_SQL_CONTEO, 'utf8')); } catch(e){}
       c.mallas = (c.mallas||0) + 1; fs.writeFileSync(process.env.FAKE_SQL_CONTEO, JSON.stringify(c));
     }
-    // los materiales salen de los LIKE '%X%' de la consulta REAL (TNT para Mallas; PVTE/PUTE/TEJIDO para Tejidos)
-    const patrones = [...texto.matchAll(/LIKE '%([^%']+)%'/g)].map(m=>m[1].toUpperCase());
-    return (d.mallas||[]).filter(f=>f.Operation==='2900' && String(f.unMed||'UND').trim()==='UND' && patrones.some(x=>String(f.Descricao).toUpperCase().includes(x)))
+    // como la consulta REAL: descripción LIKE '%X%' (TNT, PVTE...) O código LIKE '0000000006%'
+    const patrones = [...texto.matchAll(/Desenho_Descricao LIKE '%([^%']+)%'/g)].map(m=>m[1].toUpperCase());
+    const prefijos = [...texto.matchAll(/Desenho_CodMat LIKE '([^%']+)%'/g)].map(m=>m[1]);
+    return (d.mallas||[]).filter(f=>f.Operation==='2900' && String(f.unMed||'UND').trim()==='UND'
+        && (patrones.some(x=>String(f.Descricao).toUpperCase().includes(x)) || prefijos.some(x=>String(f.CodMat).startsWith(x))))
       .map(f=>({ Ordem_Serial: f.Ordem_Serial, CodMat: f.CodMat, Descricao: f.Descricao, Cantidad: f.m2 }));
   }
   if(/Desenho_Operation = '0132'/.test(texto)){ // la consulta grande: lista de pendientes

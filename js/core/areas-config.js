@@ -18,6 +18,10 @@
                    sí se puede corregir sin perder nada).
                    Con porCodmat (Mallas): el stock es por Desenho_CodMat,
                    sin medidas ni lista fija de materiales.
+   - 'posiciones': una pieza por posición con nombre (A1.1, B12.1…), cada
+                   posición de un tamaño (Tejidos). Las posiciones y los
+                   tamaños viven en server/datos/<área>/ (ver server/tejidos.js).
+   listaPorCodmat: la Lista de corte va por CodMat y no por orden (Mallas, Tejidos).
    ========================================================= */
 (function(){
   // medidas generales de Tecoflex: de 9 a 70 mm
@@ -76,21 +80,26 @@
         // stock por Desenho_CodMat (sale de SAGA, sin lista fija) en vez de
         // una orden por casilla: se da entrada a lo fabricado (un sticker por
         // malla) y el stock se descuenta de la necesidad de Lista de corte
+        listaPorCodmat: true, // Lista de corte por CodMat (no por orden), con lo que falta
         rack: { tipo: 'inventario', porCodmat: true },
         pieza: { una: 'malla', varias: 'mallas' }   // cómo se nombra cada unidad en pantalla
       },
-      // Tejidos: igual que Mallas (stock por CodMat, sticker por unidad,
-      // necesidad por puesto); cambia qué materiales trae la consulta de SAGA
-      // (PVTE, PUTE o "tejido" en la descripción, ver server/queries.js)
+      // Tejidos: la Lista de corte es igual que Mallas (por CodMat, necesidad
+      // por puesto; materiales PVTE, PUTE o "tejido", ver server/queries.js).
+      // El rack, en cambio, es por POSICIONES (A1.1, B12.1…): un tejido por
+      // posición, de su tamaño (P, G, XG) o uno más grande si no hay lugar;
+      // se da entrada uno a uno (también desde el celular) con foto del
+      // calentamiento, responsables y resistencias (ver server/tejidos.js).
       tejidos: {
         id: 'tejidos',
         nombre: 'Tejidos',
-        resumen: 'PVTE, PUTE y tejidos por CodMat, con sticker por tejido',
+        resumen: 'PVTE, PUTE y tejidos: rack por posición, con foto y sticker',
         vistas: ['ordenes', 'rack'],
         nesting: false,
         stickers: true,
         rackSql: false,
-        rack: { tipo: 'inventario', porCodmat: true },
+        listaPorCodmat: true,
+        rack: { tipo: 'posiciones', tamanos: ['P', 'G', 'XG'] },   // de menor a mayor
         pieza: { una: 'tejido', varias: 'tejidos' }
       }
     }

@@ -105,7 +105,9 @@ function respaldar(){
     fs.mkdirSync(destino, { recursive: true });
     fs.readdirSync(DATOS).forEach(nombre=>{
       if(nombre==='respaldos' || nombre==='_anteriores') return;
-      fs.cpSync(path.join(DATOS, nombre), path.join(destino, nombre), { recursive: true });
+      // las fotos (Tejidos) NO se copian cada día: solo se agregan, nunca cambian, y
+      // copiarlas 30 veces llenaría el disco. Se respaldan aparte (ver DATOS.md).
+      fs.cpSync(path.join(DATOS, nombre), path.join(destino, nombre), { recursive: true, filter: src=>path.basename(src)!=='fotos' });
     });
     const dias = fs.readdirSync(RESPALDOS).filter(n=>/^\d{4}-\d{2}-\d{2}$/.test(n)).sort();
     dias.slice(0, Math.max(0, dias.length - DIAS_RESPALDO)).forEach(n=>fs.rmSync(path.join(RESPALDOS, n), { recursive: true, force: true }));

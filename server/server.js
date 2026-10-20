@@ -91,6 +91,12 @@ const notificar = enVivo.notificar;
 const racksMod = require('./racks');
 const racks = racksMod.crear({ datos, notificar });
 const inventario = require('./inventario').crear({ datos, notificar });
+// racks por posiciones (Tejidos): uno por área, ver server/tejidos.js
+const racksPosiciones = new Map(Object.values(AREAS_CONFIG.areas).filter(a=>a.rack.tipo==='posiciones')
+  .map(a=>[a.id, require('./tejidos').crear({ datos, notificar, area: a })]));
+/* Stock por CodMat de un área con Lista de corte por CodMat: el inventario (Mallas) o las posiciones ocupadas (Tejidos). */
+const stockDeArea = area => racksPosiciones.has(area.id) ? racksPosiciones.get(area.id).stockPorMaterial() : inventario.stockPorMaterial(area);
+const versionStockDeArea = area => racksPosiciones.has(area.id) ? racksPosiciones.get(area.id).version() : inventario.version(area);
 const reglasPapel = require('./reglas-papel');
 const instantanea = require('./instantanea');
 const reglasMallas = require('./reglas-mallas');
@@ -601,7 +607,7 @@ function fotoLista(area){
     f = instantanea.crear({
       periodoMs: LISTA_PERIODO_MS,
       minEntreForzadosMs: parseFloat(process.env.LISTA_FORZAR_CADA_S || '30') * 1000,
-      cargar: area.id==='papel' ? cargarPapelCrudo : area.rack.porCodmat ? ()=>cargarMallasCrudo(area) : ()=>pendientesDeArea(area),
+      cargar: area.id==='papel' ? cargarPapelCrudo : area.listaPorCodmat ? ()=>cargarMallasCrudo(area) : ()=>pendientesDeArea(area),
       alActualizar: ()=>notificar({ tipo:'lista', area: area.id }),
     });
     fotosLista.set(area.id, f);
@@ -671,11 +677,104 @@ async function sumarOrdenesDeZfer(zfer){
    calcula al pedirla (ver reglas-mallas.js): una entrada o salida de stock
    cambia "Falta" al instante, sin consultar SQL. */
 async function cargarMallasCrudo(area){
-  const pool = await getPool();
-  const result = await pool.request().query(consultaDeArea(area, 'ordenesPendientes'));
-  const filas = result.recordset;
+  const materiales = ((queries.areas && queries.areas[area.id] && queries.areas[area.id].materiales) || []).map(m=>String(m).toUpperCase());
+  let filas;
+  if(materiales.length && queries.componentesPorCodmat){
+    // una consulta compartida (Mallas y Tejidos), con el nombre ya corregido;
+    // cada área se queda con lo que dice SU material en el nombre correcto
+    filas = (await componentesConNombre()).filter(f=>materiales.some(m=>String(f.Descricao||'').toUpperCase().includes(m)));
+  } else {
+    // área con su propia consulta en queries.js (sin lista de materiales)
+    const pool = await getPool();
+    filas = (await pool.request().query(consultaDeArea(area, 'ordenesPendientes'))).recordset;
+  }
   const cal = await traerCalendario(filas.map(f=>f.Ordem_Serial), true);
   return { filas, cal, rev: 0 };
+}
+
+/* Componentes de Mallas y Tejidos (queries.componentesPorCodmat) con el
+   nombre CORRECTO (ODATA_Fullkit). Las dos áreas se actualizan casi juntas:
+   se comparte la misma carga un ratito (COMPONENTES_CACHE_S, 60 s) para no
+   hacer dos veces una consulta que en SAGA tarda casi un minuto. */
+const COMPONENTES_CACHE_MS = parseFloat(process.env.COMPONENTES_CACHE_S || '60') * 1000;
+let componentesCache = { hasta: 0, promesa: null };
+function componentesConNombre(){
+  if(componentesCache.promesa && Date.now() < componentesCache.hasta) return componentesCache.promesa;
+  const promesa = (async()=>{
+    const pool = await getPool();
+    const filas = (await pool.request().query(queries.componentesPorCodmat)).recordset;
+    const nombres = await nombresDeComponentes(filas.map(f=>f.CodMat).filter(debeCorregirNombre));
+    filas.forEach(f=>{
+      const n = nombres[sinCeros(f.CodMat)];
+      if(n && n!==f.Descricao){ f.DescricaoSaga = f.Descricao; f.Descricao = n; } // el de SAGA queda a mano
+    });
+    return filas;
+  })();
+  componentesCache = { hasta: Date.now() + COMPONENTES_CACHE_MS, promesa };
+  promesa.catch(()=>{ if(componentesCache.promesa===promesa) componentesCache = { hasta: 0, promesa: null }; });
+  return promesa;
+}
+
+/* ============ Nombre correcto de los componentes (ODATA_Fullkit) ============
+   En SAGA, varios componentes (los CodMat que empiezan por 0000000006, como
+   las mallas y los tejidos) traen en Desenho_Descricao un nombre que no es
+   el original (ej. "ZHAL BUFFER ACEROS CO"). La tabla ODATA_Fullkit (en
+   agpcol.database.windows.net, base agpc-productivity) tiene el nombre bien,
+   con el mismo código (COMPONENTE). Se busca ahí, una vez por cada
+   actualización de la lista. Se activa con FULLKIT_DB_SERVER y
+   FULLKIT_DB_DATABASE en el .env (es OTRO servidor que Calendario:
+   agpcolcalendario); usuario y clave, si no se ponen, son los de Calendario.
+   Si no está configurado o falla, se deja el nombre de SAGA: nunca deja la
+   lista vacía ni la frena. */
+const sinCeros = v => String(v==null ? '' : v).trim().replace(/^0+/, '');
+const debeCorregirNombre = codmat => /^0000000006/.test(String(codmat||'').trim());
+const fkEnv = (k, porDefecto) => process.env['FULLKIT_DB_' + k] || porDefecto;
+const dbConfigFullkit = process.env.FULLKIT_DB_DATABASE && process.env.FULLKIT_DB_SERVER ? {
+  server: process.env.FULLKIT_DB_SERVER,
+  database: process.env.FULLKIT_DB_DATABASE,
+  port: parseInt(fkEnv('PORT', process.env.CAL_DB_PORT || '1433'), 10),
+  requestTimeout: DB_REQUEST_TIMEOUT_MS,
+  connectionTimeout: DB_CONNECTION_TIMEOUT_MS,
+  options: {
+    trustServerCertificate: CONFIAR_CERTIFICADO,
+    trustedConnection: String(fkEnv('TRUSTED_CONNECTION', process.env.CAL_DB_TRUSTED_CONNECTION)).toLowerCase() === 'true'
+  }
+} : null;
+if(dbConfigFullkit && fkEnv('USER', process.env.CAL_DB_USER)){
+  dbConfigFullkit.user = fkEnv('USER', process.env.CAL_DB_USER);
+  dbConfigFullkit.password = fkEnv('PASSWORD', process.env.CAL_DB_PASSWORD);
+}
+let poolFullkitPromise = null;
+function getPoolFullkit(){
+  if(!poolFullkitPromise){
+    poolFullkitPromise = new sql.ConnectionPool(dbConfigFullkit).connect()
+      .catch(err=>{ poolFullkitPromise = null; throw err; });
+  }
+  return poolFullkitPromise;
+}
+/* CodMat (como venga) -> nombre correcto, por el código SIN ceros (COMPONENTE
+   puede estar guardado con o sin los ceros de SAP: se buscan las dos formas). */
+async function nombresDeComponentes(codmats){
+  const cfg = queries.nombresComponente || { tabla: 'dbo.ODATA_Fullkit', columnaCodigo: 'COMPONENTE', columnaNombre: 'DESCRIP_COMPONENTE' };
+  const unicos = [...new Set(codmats.map(c=>String(c).trim()))];
+  if(!dbConfigFullkit || !unicos.length) return {};
+  try {
+    const pool = await getPoolFullkit();
+    const mapa = {};
+    for(const tanda of enTandas(unicos, 400)){ // 2 parámetros por código: muy por debajo del tope de 2100
+      const request = pool.request();
+      const conCeros = placeholdersIn(request, 'fk', tanda), sinCerosPh = placeholdersIn(request, 'fs', tanda.map(sinCeros));
+      const result = await request.query(
+        `SELECT ${cfg.columnaCodigo} AS codigo, MAX(${cfg.columnaNombre}) AS nombre FROM ${cfg.tabla}
+         WHERE ${cfg.columnaCodigo} IN (${conCeros}) OR ${cfg.columnaCodigo} IN (${sinCerosPh})
+         GROUP BY ${cfg.columnaCodigo}`);
+      result.recordset.forEach(r=>{ const n = String(r.nombre==null ? '' : r.nombre).trim(); if(n) mapa[sinCeros(r.codigo)] = n; });
+    }
+    return mapa;
+  } catch(err){
+    console.error('[nombres-componentes] no se pudo consultar ODATA_Fullkit, se dejan los nombres de SAGA:', err.message);
+    return {};
+  }
 }
 
 app.get('/api/ordenes-pendientes', exigirPermiso('ordenes'), async (req, res) => {
@@ -683,16 +782,16 @@ app.get('/api/ordenes-pendientes', exigirPermiso('ordenes'), async (req, res) =>
     const area = areaDe(req);
     const puedeForzar = !!req.usuarioObj.admin;
     const r = await fotoLista(area).obtener({ forzar: puedeForzar && req.query.forzar==='1' });
-    const porCodmat = !!area.rack.porCodmat;
+    const porCodmat = !!area.listaPorCodmat;
     res.json({
       ordenes: area.id==='papel' ? clasificarPapel(r.datos).entran
-             : porCodmat ? reglasMallas.agrupar(r.datos.filas, r.datos.cal, inventario.stockPorMaterial(area)).filas
+             : porCodmat ? conTamano(area, reglasMallas.agrupar(r.datos.filas, r.datos.cal, stockDeArea(area)).filas)
              : r.datos,
       actualizado: new Date(r.actualizado).toISOString(),
       proxima: new Date(r.proxima).toISOString(),
       // cambia con cada consulta a SQL, con cada aprobación (papel) y con cada
       // movimiento de stock (mallas): esas dos cambian la lista sin consultar SQL
-      version: `${r.actualizado}.${(r.datos && r.datos.rev) || 0}.${area.id==='papel' ? [...aprobaciones.aprobados()].sort().join('|') : ''}.${porCodmat ? inventario.version(area) : ''}`,
+      version: `${r.actualizado}.${(r.datos && r.datos.rev) || 0}.${area.id==='papel' ? [...aprobaciones.aprobados()].sort().join('|') : ''}.${porCodmat ? versionStockDeArea(area) : ''}`,
       aviso: r.aviso || null,
       puedeForzar
     });
@@ -908,6 +1007,10 @@ app.post('/api/rack-simulado/reentrada', exigirPermiso('rack'), conArea((req, re
 
 /* Resumen del día: cuántas entraron y salieron del rack HOY. */
 app.get('/api/rack-resumen-dia', exigirPermiso('ordenes','rack'), conArea((req, res, area) => {
+  if(racksPosiciones.has(area.id)){ // por posiciones (Tejidos): piezas que entraron / salieron hoy, y ocupadas
+    const e = racksPosiciones.get(area.id).estado();
+    return res.json({ entradasHoy: e.hoy.entra, salidasHoy: e.hoy.sale, enStock: e.posiciones.filter(p=>p.unidad).length });
+  }
   if(area.rack.tipo==='inventario'){ // por cantidad: unidades que entraron / salieron hoy, y stock
     const inv = inventario.consultar(area);
     return res.json({ entradasHoy: inv.hoy.entra, salidasHoy: inv.hoy.sale, enStock: inv.stock.reduce((s, x)=>s + x.cantidad, 0) });
@@ -949,6 +1052,42 @@ app.post('/api/inventario/movimientos', exigirPermiso('rack','ordenes'), (req, r
     res.status(r.status).json(r.cuerpo);
   } catch(e){ responderError(res, 'inventario/movimientos', e); }
 });
+
+/* ============ Rack por posiciones (Tejidos), ver server/tejidos.js ============
+   Entradas (una a una, con foto obligatoria) y salidas: permiso de Rack.
+   Ver el rack y asignar el tamaño de un tejido: Rack o Lista de corte. */
+function conRackPosiciones(fn){
+  return (req, res) => {
+    let area;
+    try { area = areaDe(req); } catch(e){ return responderError(res, req.path, e); }
+    const rp = racksPosiciones.get(area.id);
+    if(!rp) return res.status(400).json({ error: `${area.nombre} no tiene rack por posiciones.` });
+    Promise.resolve().then(()=>fn(req, res, rp, area)).catch(e=>responderError(res, req.path, e));
+  };
+}
+app.get('/api/tejidos/rack', exigirPermiso('rack','ordenes'), conRackPosiciones((req, res, rp)=>res.json(rp.estado())));
+// la foto llega cruda (ya achicada por el navegador): no pasa por el lector de JSON
+app.post('/api/tejidos/fotos', exigirPermiso('rack'), express.raw({ type: ()=>true, limit: '9mb' }),
+  conRackPosiciones((req, res, rp)=>res.json({ ok: true, foto: rp.guardarFoto(req.body) })));
+app.get('/api/tejidos/fotos/:archivo', exigirPermiso('rack','ordenes'), conRackPosiciones((req, res, rp)=>{
+  const r = rp.rutaFoto(req.params.archivo);
+  if(!r) return res.status(404).json({ error: 'no existe esa foto' });
+  res.setHeader('Cache-Control', 'private, max-age=86400'); // la foto de una entrada no cambia nunca
+  res.sendFile(r);
+}));
+app.post('/api/tejidos/entrada', exigirPermiso('rack'), conRackPosiciones((req, res, rp)=>res.json({ ok: true, ...rp.entrada(req.body, req.usuario) })));
+app.post('/api/tejidos/salida', exigirPermiso('rack'), conRackPosiciones((req, res, rp)=>res.json({ ok: true, ...rp.salida(req.body || {}, req.usuario) })));
+app.put('/api/tejidos/tamano', exigirPermiso('rack','ordenes'), conRackPosiciones((req, res, rp)=>res.json({ ok: true, ...rp.fijarTamano(req.body || {}, req.usuario) })));
+app.get('/api/tejidos/historial', exigirPermiso('rack','ordenes'), conRackPosiciones((req, res, rp)=>{
+  const q = req.query || {};
+  const evento = ['entrada','salida','tamano','movimientos'].includes(q.evento) ? q.evento : null;
+  res.json(rp.historial({ desde: q.desde, hasta: q.hasta, evento, texto: q.texto, limite: q.limite }));
+}));
+/* Lista de corte de un área por posiciones: cada fila con el tamaño de su tejido ('' = sin tamaño). */
+function conTamano(area, filas){
+  const rp = racksPosiciones.get(area.id);
+  return rp ? filas.map(f=>({ ...f, Tamano: rp.tamanoDe(f.CodMat) })) : filas;
+}
 
 /* ============ Cambios en vivo (ver server/en-vivo.js) ============ */
 app.get('/api/eventos', exigirLogin, enVivo.manejar);

@@ -10,7 +10,7 @@
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Manrope:wght@600;700;800&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;700&display=swap">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
-<link rel="stylesheet" href="css/styles.css?v=20261020b">
+<link rel="stylesheet" href="css/styles.css?v=20261020i">
 </head>
 <body data-area="papel">
 
@@ -87,7 +87,7 @@
       <div id="authLoggedIn" class="sessionIn" hidden>
         <span class="avatar" id="authAvatar" aria-hidden="true">·</span>
         <span class="sessionUser" id="authUsuarioActual"></span><em class="rolTag onDark" id="authRolActual" hidden>Admin</em>
-        <button class="btnOnDark" id="authLogoutBtn">Cerrar sesión</button>
+        <button class="btnOnDark" id="authLogoutBtn" aria-label="Cerrar sesión"><span class="txtLargo">Cerrar sesión</span><span class="txtCorto">Salir</span></button>
       </div>
     </div>
   </header>
@@ -409,7 +409,13 @@
 
     <!-- Mallas y Tejidos: lo fabricado entra al Rack (stock por CodMat), con un sticker por unidad -->
     <div class="panel sidepanel msLado" data-areas="mallas tejidos">
-      <section class="cart" aria-label="Entrada al rack">
+      <!-- Tejidos: se ingresan uno a uno en el Rack (con foto, también desde el celular) -->
+      <section class="cart tjIrRack" data-areas="tejidos" aria-label="Dar entrada a tejidos">
+        <div class="cartHead"><h3>Dar entrada</h3></div>
+        <div class="hint" style="margin-top:-4px">Los tejidos se ingresan <b>uno a uno</b> en el <b>Rack</b>, con la foto del calentamiento: la app les busca una posición libre de su tamaño. Tocá una fila de la lista para ir con ese tejido elegido.</div>
+        <button type="button" id="tjIrRackBtn">Ir al Rack de Tejidos</button>
+      </section>
+      <section class="cart" data-areas="mallas" aria-label="Entrada al rack">
         <div class="cartHead">
           <h3>Entrada al rack</h3><span class="cartCount" id="msEntCount">0</span>
           <button type="button" class="btnGhost btnSm" id="msEntVaciar" hidden>Vaciar</button>
@@ -456,8 +462,8 @@
     </div>
   </div>
 
-  <!-- ===== Rack de Mallas y Tejidos: stock por CodMat (ver js/ui/mallas.js) ===== -->
-  <div class="panel controls" data-areas="mallas tejidos">
+  <!-- ===== Rack de Mallas: stock por CodMat (ver js/ui/mallas.js) ===== -->
+  <div class="panel controls" data-areas="mallas">
     <div class="hint" style="margin-top:0">Stock de <span data-pieza="varias">mallas</span> por <b>CodMat</b>. Entra desde <b>Lista de corte</b> (con un sticker por <span data-pieza="una">malla</span>) y sale acá cuando se usa.</div>
     <div class="kpiRow">
       <div class="stat big"><span><span data-pieza="varias">mallas</span> en stock</span><b id="msKpiStock">—</b></div>
@@ -480,11 +486,109 @@
       <div class="hint" id="msSalStatus">&nbsp;</div>
     </section>
   </div>
-  <div class="panel stagepanel" data-areas="mallas tejidos">
+  <div class="panel stagepanel" data-areas="mallas">
     <div class="panelHead"><h3>Stock</h3><span class="hint">"Falta" ya descuenta el stock de lo que pide Lista de corte</span></div>
     <div class="tableWrap" id="msStockWrap"><div class="empty">Cargando…</div></div>
     <div class="panelHead"><h3>Movimientos recientes</h3></div>
     <div class="tableWrap invMovsWrap" id="msMovs"><div class="empty">—</div></div>
+  </div>
+
+  <!-- ===== Rack de Tejidos: una pieza por posición, con foto (ver js/ui/tejidos.js) =====
+       Pensado también para el celular: se usa de pie, junto al rack. -->
+  <div class="panel controls tjEntrada" data-areas="tejidos">
+    <form id="tjForm" novalidate>
+      <div class="cartHead"><h3>Dar entrada</h3></div>
+      <div class="hint" style="margin-top:-4px">Uno por uno. La app le busca una posición libre de su tamaño (o una más grande si no hay) e imprime el sticker.</div>
+      <!-- lista desplegable propia: el <datalist> en el iPhone solo sugiere arriba del teclado -->
+      <div class="field tjCombo" id="tjCombo">
+        <label for="tjTejido">Tejido <span class="req">*</span></label>
+        <div class="tjComboCaja">
+          <input type="text" id="tjTejido" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="tjLista"
+            autocomplete="off" autocorrect="off" autocapitalize="characters" spellcheck="false" enterkeyhint="done"
+            placeholder="Tocá o escribí CodMat / nombre">
+          <button type="button" class="tjComboBtn" id="tjComboBtn" tabindex="-1" aria-label="Ver la lista de tejidos">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button>
+        </div>
+        <div class="tjLista" id="tjLista" role="listbox" aria-label="Tejidos" hidden></div>
+      </div>
+      <div class="tjElegido" id="tjElegido" hidden></div>
+      <div class="field"><label for="tjResponsables">Responsables <span class="req">*</span></label><input type="text" id="tjResponsables" maxlength="80" autocomplete="off"></div>
+      <div class="row2">
+        <div class="field"><label for="tjR1">Resistencia 1 <span class="req">*</span></label><input type="text" id="tjR1" maxlength="40" inputmode="decimal" autocomplete="off"></div>
+        <div class="field"><label for="tjR2">Resistencia 2</label><input type="text" id="tjR2" maxlength="40" inputmode="decimal" autocomplete="off"></div>
+      </div>
+      <div class="field"><label for="tjEnsamble">Ensamble</label><input type="text" id="tjEnsamble" maxlength="60" autocomplete="off"></div>
+      <div class="field">
+        <span class="labelRow"><label>Foto del calentamiento <span class="req">*</span></label></span>
+        <!-- en el celular abre directo la cámara (capture); en la PC, elegir archivo -->
+        <label class="tjFotoBtn" for="tjFoto"><span id="tjFotoTxt">📷 Tomar foto</span>
+          <input type="file" id="tjFoto" accept="image/*" capture="environment"></label>
+        <img id="tjFotoPrev" class="tjFotoPrev" alt="Foto elegida" hidden>
+      </div>
+      <button type="submit" id="tjEntrar">Dar entrada</button>
+      <div class="hint" id="tjMsg"></div>
+    </form>
+    <div class="tjResultado" id="tjResultado" hidden></div>
+  </div>
+  <div class="panel stagepanel tjRackPanel" data-areas="tejidos">
+    <div class="kpiRow kpi3" id="tjKpis"></div>
+    <div class="panelHead">
+      <h3>Rack de tejidos</h3>
+      <div class="tjTabs" role="tablist" aria-label="Vista del rack">
+        <button type="button" role="tab" class="tjTab active" data-tab="material" aria-selected="true">Por material</button>
+        <button type="button" role="tab" class="tjTab" data-tab="mapa" aria-selected="false">Mapa</button>
+        <button type="button" role="tab" class="tjTab" data-tab="historial" aria-selected="false">Historial</button>
+      </div>
+      <button type="button" class="secondary tjActualizar" id="tjActualizar" title="Volver a traer el rack (igual se actualiza solo)">↻ Actualizar</button>
+    </div>
+    <div class="inputIcon slim tjBuscar" id="tjBuscarRack">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+      <input type="search" id="tjFiltro" placeholder="Buscar posición, CodMat, nombre o vehículo" aria-label="Buscar en el rack">
+    </div>
+    <!-- por material: cuánto hay de cada uno; al elegirlo, en qué posiciones está -->
+    <div class="tjVista" data-tab="material">
+      <div class="tjPorMaterial">
+        <div class="tjMateriales" id="tjMateriales" role="listbox" aria-label="Materiales en el rack"><div class="empty">Cargando…</div></div>
+        <div class="tjUbicaciones" id="tjUbicaciones"><div class="empty">Elegí un material para ver en qué posiciones está.</div></div>
+      </div>
+    </div>
+    <div class="tjVista" data-tab="mapa" hidden>
+      <div class="tjLeyenda"><span><i class="tjL libre"></i> libre</span><span><i class="tjL ocupada"></i> con tejido</span><span>P · G · XG = tamaño de la posición</span><span>Tocá una posición ocupada para ver su foto, reimprimir o darle salida</span></div>
+      <div class="tjMapa" id="tjMapa"><div class="empty">Cargando…</div></div>
+    </div>
+    <!-- historial: cada entrada, salida y tamaño asignado (nunca se borra) -->
+    <div class="tjVista" data-tab="historial" hidden>
+      <div class="tjHistFiltros">
+        <select id="tjHistPeriodo" aria-label="Período">
+          <option value="0">Hoy</option><option value="7" selected>Últimos 7 días</option><option value="30">Últimos 30 días</option><option value="365">Último año</option><option value="">Todo</option>
+        </select>
+        <select id="tjHistEvento" aria-label="Movimiento">
+          <option value="movimientos">Entradas y salidas</option><option value="entrada">Solo entradas</option><option value="salida">Solo salidas</option><option value="tamano">Tamaños asignados</option><option value="">Todo</option>
+        </select>
+        <div class="inputIcon slim">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+          <input type="search" id="tjHistTexto" placeholder="CodMat, tejido, posición, responsable…" aria-label="Buscar en el historial">
+        </div>
+        <button type="button" class="excelBtn" id="tjHistExcel" title="Descargar en Excel el historial filtrado">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="3" width="20" height="18" rx="3.5" fill="#107C41"/><path d="M8 8l8 8M16 8l-8 8" stroke="#fff" stroke-width="2.4" stroke-linecap="round"/></svg>
+          <span>Excel</span>
+        </button>
+      </div>
+      <div class="tjHistResumen" id="tjHistResumen"></div>
+      <div class="tjHistTabla" id="tjHist"><div class="empty">Cargando…</div></div>
+    </div>
+  </div>
+  <!-- detalle de una posición (foto, datos, salida) -->
+  <div class="logOverlay modalOverlay" id="tjDetalle" style="display:none">
+    <div class="logPanel modalCard tjDetalleCard" role="dialog" aria-modal="true" aria-labelledby="tjDetTitulo">
+      <div class="logPanelHead"><div><div class="logPanelTitle" id="tjDetTitulo">—</div><div class="logPanelSub" id="tjDetSub">—</div></div>
+        <button class="iconbtn" id="tjDetCerrar" aria-label="Cerrar">✕</button></div>
+      <div class="logPanelBody tjDetBody" id="tjDetBody"></div>
+      <div class="logPanelFoot modalFoot tjDetAcciones" id="tjDetAcciones">
+        <button class="secondary" id="tjDetReimp">🖨 Reimprimir sticker</button>
+        <button class="tjSalidaBtn" id="tjDetSalida">Dar salida</button>
+      </div>
+    </div>
   </div>
 
   <!-- ===== Rack de Tecoflex: inventario por material y medida ===== -->
@@ -662,54 +766,55 @@
 </div>
 
 <!-- ===== núcleo geométrico (sin dependencias del resto) ===== -->
-<script src="js/core/geometry.js?v=20261020b"></script>
-<script src="js/core/polygon.js?v=20261020b"></script>
-<script src="js/core/transform.js?v=20261020b"></script>
-<script src="js/core/areas-config.js?v=20261020b"></script>
+<script src="js/core/geometry.js?v=20261020i"></script>
+<script src="js/core/polygon.js?v=20261020i"></script>
+<script src="js/core/transform.js?v=20261020i"></script>
+<script src="js/core/areas-config.js?v=20261020i"></script>
 
 <!-- ===== lectura y reparación de DXF ===== -->
-<script src="js/dxf/parser.js?v=20261020b"></script>
-<script src="js/dxf/repair.js?v=20261020b"></script>
+<script src="js/dxf/parser.js?v=20261020i"></script>
+<script src="js/dxf/repair.js?v=20261020i"></script>
 
 <!-- ===== motor de nesting ===== -->
-<script src="js/nesting/orientation.js?v=20261020b"></script>
-<script src="js/nesting/placement.js?v=20261020b"></script>
-<script src="js/nesting/scoring.js?v=20261020b"></script>
-<script src="js/nesting/optimization.js?v=20261020b"></script>
+<script src="js/nesting/orientation.js?v=20261020i"></script>
+<script src="js/nesting/placement.js?v=20261020i"></script>
+<script src="js/nesting/scoring.js?v=20261020i"></script>
+<script src="js/nesting/optimization.js?v=20261020i"></script>
 
 <!-- ===== puente al Web Worker real (Bloque 3) ===== -->
-<script src="js/nesting/worker-bridge.js?v=20261020b"></script>
+<script src="js/nesting/worker-bridge.js?v=20261020i"></script>
 
 <!-- ===== tiras de relleno automáticas ===== -->
-<script src="js/strips/strips.js?v=20261020b"></script>
+<script src="js/strips/strips.js?v=20261020i"></script>
 
 <!-- ===== interfaz ===== -->
-<script src="js/ui/html.js?v=20261020b"></script>
-<script src="js/ui/areas.js?v=20261020b"></script>
-<script src="js/ui/pieces.js?v=20261020b"></script>
-<script src="js/ui/render.js?v=20261020b"></script>
-<script src="js/ui/history.js?v=20261020b"></script>
-<script src="js/ui/repair.js?v=20261020b"></script>
+<script src="js/ui/html.js?v=20261020i"></script>
+<script src="js/ui/areas.js?v=20261020i"></script>
+<script src="js/ui/pieces.js?v=20261020i"></script>
+<script src="js/ui/render.js?v=20261020i"></script>
+<script src="js/ui/history.js?v=20261020i"></script>
+<script src="js/ui/repair.js?v=20261020i"></script>
 
 <!-- ===== orquestación del motor (une UI + nesting) ===== -->
-<script src="js/nesting/engine.js?v=20261020b"></script>
+<script src="js/nesting/engine.js?v=20261020i"></script>
 
 <!-- ===== exportación ===== -->
-<script src="js/export/dxf.js?v=20261020b"></script>
-<script src="js/export/zip.js?v=20261020b"></script>
-<script src="js/export/pdf.js?v=20261020b"></script>
-<script src="js/export/stickers.js?v=20261020b"></script>
-<script src="js/export/excel.js?v=20261020b"></script>
+<script src="js/export/dxf.js?v=20261020i"></script>
+<script src="js/export/zip.js?v=20261020i"></script>
+<script src="js/export/pdf.js?v=20261020i"></script>
+<script src="js/export/stickers.js?v=20261020i"></script>
+<script src="js/export/excel.js?v=20261020i"></script>
 
 <!-- ===== arranque de la app (áreas, pestañas, sesión) ===== -->
-<script src="js/ui/orders.js?v=20261020b"></script>
-<script src="js/ui/inventario.js?v=20261020b"></script>
-<script src="js/ui/mallas.js?v=20261020b"></script>
-<script src="js/ui/tiempo-real.js?v=20261020b"></script>
-<script src="js/ui/auth.js?v=20261020b"></script>
-<script src="js/ui/usuarios.js?v=20261020b"></script>
-<script src="js/ui/aprobaciones.js?v=20261020b"></script>
-<script src="js/app.js?v=20261020b"></script>
+<script src="js/ui/orders.js?v=20261020i"></script>
+<script src="js/ui/inventario.js?v=20261020i"></script>
+<script src="js/ui/mallas.js?v=20261020i"></script>
+<script src="js/ui/tejidos.js?v=20261020i"></script>
+<script src="js/ui/tiempo-real.js?v=20261020i"></script>
+<script src="js/ui/auth.js?v=20261020i"></script>
+<script src="js/ui/usuarios.js?v=20261020i"></script>
+<script src="js/ui/aprobaciones.js?v=20261020i"></script>
+<script src="js/app.js?v=20261020i"></script>
 
 <!-- Aviso de seguridad: si el CSS o el JS no llegaron a cargar (por ej.
      si abriste este archivo haciendo doble clic ADENTRO de un .zip sin

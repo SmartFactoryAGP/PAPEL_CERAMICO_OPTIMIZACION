@@ -62,6 +62,9 @@ function trDespachar(evento){
   if(evento.tipo==='inventario'){
     if(typeof invAplicarResultado==='function') invAplicarResultado(evento);
     if(typeof msAplicarResultado==='function') msAplicarResultado(evento);
+  } else if(evento.tipo==='tejidos'){
+    // entrada, salida o tamaño en el rack de Tejidos (otra PC o un celular)
+    if(typeof tjAlCambiar==='function') tjAlCambiar(evento);
   } else if(evento.tipo==='aprobaciones'){
     if(typeof apAlCambiar==='function') apAlCambiar();
   } else if(evento.tipo==='lista'){

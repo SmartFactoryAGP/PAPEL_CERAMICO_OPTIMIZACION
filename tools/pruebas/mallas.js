@@ -16,16 +16,19 @@ prueba('Mallas: Lista de corte por CodMat y stock', async limpiar=>{
     { Ordem_Serial: 2, CodMat: '000000000600019608', Descricao: 'MTNTF A', Cantidad: '1.000' },  // 12P_ENSA
     { Ordem_Serial: 3, CodMat: '000000000600019608', Descricao: 'MTNTF A', Cantidad: '1.000' },  // 12P_ENSA
     { Ordem_Serial: 4, CodMat: '000000000600019608', Descricao: 'MTNTF A', Cantidad: '1.000' },  // 18INSFIN: no está en la lista
-    { Ordem_Serial: 5, CodMat: '000000000600039800', Descricao: 'MTNTF B', Cantidad: '1.000' },  // 05EMPLA
+    { Ordem_Serial: 5, CodMat: '000000000600039800', Descricao: 'MTNTF B', Cantidad: '1.000' },  // 05EMPAL
   ];
   const cal = { 1: { puesto: 'Planeacion', vehiculo: 'BMW X5' }, 2: { puesto: '12P_ENSA', vehiculo: 'BMW X5' }, 3: { puesto: '12P_ENSA', vehiculo: 'BMW X5' },
-                4: { puesto: '18INSFIN' }, 5: { puesto: '05EMPLA', vehiculo: 'URO VAMTAC' } };
+                4: { puesto: '18INSFIN' }, 5: { puesto: '05EMPAL', vehiculo: 'URO VAMTAC' } };
   const r = reglas.agrupar(filas, cal, new Map([['600019608', 3]]));
   assert.deepStrictEqual(r.filas.map(f=>[f.CodMat, f.Puestodetrabajo, f.Cantidad, f.Cubierto, f.Falta, f.Ordenes, f.Vehiculo]), [
     ['600019608', '12P_ENSA', 2, 2, 0, 2, 'BMW X5'],     // el stock cubre primero el puesto más avanzado
     ['600019608', 'Planeacion', 2, 1, 1, 1, 'BMW X5'],   // y lo que sobra, Planeacion
-    ['600039800', '05EMPLA', 1, 0, 1, 1, 'URO VAMTAC'],
+    ['600039800', '05EMPAL', 1, 0, 1, 1, 'URO VAMTAC'],
   ]);
+  // escritos como en la tabla real de Calendario
+  assert.ok(reglas.puestoPermitido('04SER_TT') && reglas.puestoPermitido('05EMPAL') && reglas.puestoPermitido('04ser_vt'));
+  assert.ok(!reglas.puestoPermitido('18INSFIN'));
   ok('regla: CodMat sin los 9 ceros; Cantidad = suma de m2; solo los puestos pedidos (+Planeacion); el stock cubre primero 12P_ENSA');
 
   // ---------- de punta a punta ----------
@@ -39,7 +42,7 @@ prueba('Mallas: Lista de corte por CodMat y stock', async limpiar=>{
       { orden: '11', puesto: '12P_ENSA', vehiculo: 'BMW X5 4D UTILITY' }, { orden: '12', puesto: 'Planeacion', vehiculo: 'BMW X5 4D UTILITY' },
       { orden: '13', puesto: '02CNC', vehiculo: 'URO VAMTAC ST5' },        { orden: '14', puesto: '16ACV', vehiculo: 'BMW X5 4D UTILITY' },
       { orden: '15', puesto: '01CORTE' }, { orden: '16', puesto: '01CORTE' },
-      { orden: '21', puesto: '01CORTE', vehiculo: 'MERCEDES GLS 450' }, { orden: '22', puesto: 'Planeacion', vehiculo: 'RAM 1500' }, { orden: '23', puesto: '05EMPLA' },
+      { orden: '21', puesto: '01CORTE', vehiculo: 'MERCEDES GLS 450' }, { orden: '22', puesto: 'Planeacion', vehiculo: 'RAM 1500' }, { orden: '23', puesto: '05EMPAL' },
     ],
     mallas: [
       m('11', '000000000600019608', 'MTNTF0036.1244.01 D', '1.000'), m('12', '000000000600019608', 'MTNTF0036.1244.01 D', '2.000'),
@@ -102,17 +105,15 @@ prueba('Mallas: Lista de corte por CodMat y stock', async limpiar=>{
   const listaT = async token => { const r = await api(p.url, 'GET', '/api/ordenes-pendientes', { token, area: 'tejidos' }); return r; };
   const lt = await listaT(adm);
   assert.strictEqual(lt.s, 200, JSON.stringify(lt.d));
-  assert.strictEqual(resumen(lt.d), '600050001@01CORTE:1/1 600050002@Planeacion:1/1 600050003@05EMPLA:1/1');
+  assert.strictEqual(resumen(lt.d), '600050001@01CORTE:1/1 600050002@Planeacion:1/1 600050003@05EMPAL:1/1');
   assert.strictEqual(lt.d.ordenes[0].Vehiculo, 'MERCEDES GLS 450');
   ok('Tejidos: Operation 2900 + UND + PVTE / PUTE / "tejido" (sin importar mayúsculas); sin las mallas TNT; mismo agrupado por CodMat y puesto');
   assert.strictEqual((await listaT(tFab)).s, 403, 'permiso de Mallas no da Tejidos');
-  const et = await api(p.url, 'POST', '/api/inventario/movimientos', { token: adm, area: 'tejidos', cuerpo: { items: [{ tipo: 'entrada', material: '600050001', descripcion: 'PVTE 000 MERC GLS 450 4D U 2017', cantidad: 1 }] } });
-  assert.strictEqual(et.s, 200);
-  assert.deepStrictEqual(et.d.stock.map(s=>s.material+':'+s.cantidad), ['600050001:1']);
-  assert.strictEqual(resumen((await listaT(adm)).d), '600050001@01CORTE:1/0 600050002@Planeacion:1/1 600050003@05EMPLA:1/1');
+  // Tejidos NO usa el inventario por cantidad de Mallas: su rack es por posición (ver tejidos.js)
+  const et = await api(p.url, 'POST', '/api/inventario/movimientos', { token: adm, area: 'tejidos', cuerpo: { items: [{ tipo: 'entrada', material: '600050001', cantidad: 1 }] } });
+  assert.strictEqual(et.s, 400, 'a Tejidos no se le da entrada por cantidad');
   const stockMallas = (await api(p.url, 'GET', '/api/inventario', { token: adm, area: 'mallas' })).d.stock.map(s=>s.material+':'+s.cantidad);
-  assert.deepStrictEqual(stockMallas, ['600019608:1'], 'el stock de Tejidos se mezcló con el de Mallas');
-  assert.ok(fs.existsSync(path.join(dir, 'server', 'datos', 'tejidos', 'movimientos.jsonl')));
-  ok('Tejidos tiene su propio stock (datos/tejidos/), independiente de Mallas, y sus propios permisos');
+  assert.deepStrictEqual(stockMallas, ['600019608:1'], 'el stock de Mallas cambió');
+  ok('Tejidos: su rack es por posición (aparte), el stock de Mallas no se toca; permisos propios');
 });
 

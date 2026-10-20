@@ -13,9 +13,12 @@ const PASOS = [
   ['Papel: regla CURVE/NivelAGP y Aprobaciones de ZFER', path.join(__dirname, 'aprobaciones.js')],
   ['Lista de corte: 1 consulta a SQL por hora', path.join(__dirname, 'lista-protegida.js')],
   ['Mallas: lista por CodMat y stock', path.join(__dirname, 'mallas.js')],
+  ['Nombres de componentes (ODATA_Fullkit)', path.join(__dirname, 'nombres-componentes.js')],
+  ['Rack de Tejidos (posiciones, foto)', path.join(__dirname, 'tejidos.js')],
   ['Navegador (Chrome)', path.join(__dirname, 'navegador.js')],
   ['Navegador: Lista de corte de papel y Aprobaciones', path.join(__dirname, 'navegador-aprobaciones.js')],
   ['Navegador: Mallas (entrada con stickers y salida)', path.join(__dirname, 'navegador-mallas.js')],
+  ['Navegador: Rack de Tejidos en el celular', path.join(__dirname, 'navegador-tejidos.js')],
 ].filter(([, f])=>!(process.argv.includes('--sin-navegador') && path.basename(f).startsWith('navegador')));
 
 const resultados = [];

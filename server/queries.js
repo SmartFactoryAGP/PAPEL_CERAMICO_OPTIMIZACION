@@ -231,6 +231,16 @@ module.exports = {
     columnaVehiculo: 'Vehiculo'      // se muestra en Lista de corte
   },
 
+  /* Nombre correcto de los componentes (Mallas, Tejidos): en SAGA los CodMat
+     que empiezan por 0000000006 traen a veces un nombre que no es el
+     original; esta tabla (otra base, en agpcol.database.windows.net) lo tiene
+     bien con el mismo código. Se activa con FULLKIT_DB_DATABASE en el .env. */
+  nombresComponente: {
+    tabla: 'dbo.ODATA_Fullkit',
+    columnaCodigo: 'COMPONENTE',
+    columnaNombre: 'DESCRIP_COMPONENTE'
+  },
+
   /* Tecoflex y Mallas: viven en OTRAS tablas — completar cuando estén
      confirmadas (ver la explicación completa en queries.example.js).
      Mientras estén vacías, esas áreas muestran "consulta pendiente de
@@ -239,41 +249,40 @@ module.exports = {
     tecoflex: {
       // ordenesPendientes: `SELECT ... AS "Ordem_Serial", ... AS "ARCHIVO", ... AS "Medida" FROM dbo.TU_TABLA_TECOFLEX WHERE ...`,
     },
-    /* Mallas: la MISMA vista de SAGA, otros filtros (pedido explícito):
-       Operation 2900, unidad UND y "TNT" dentro de la descripción. No lleva
-       archivo (no pasa por nesting). Cantidad = m2, que con unMed UND trae
-       cuántas mallas lleva la orden (1,000 / 2,000). El Puestodetrabajo y el
-       Vehículo salen del BUSCARV de Calendario, y el agrupado por CodMat y
-       puesto lo hace server/reglas-mallas.js. */
+    /* Mallas y Tejidos: salen de la MISMA consulta (componentesPorCodmat,
+       abajo) y cada área se queda con los materiales cuyo NOMBRE contiene
+       alguna de estas palabras. El nombre es el CORRECTO (ODATA_Fullkit, si
+       está configurado): en SAGA, muchos códigos 0000000006… traen un nombre
+       que no es el original ("ZHAL BUFFER ACEROS CO") y, filtrando por ese
+       nombre, se perdían. */
     mallas: {
-      ordenesPendientes: `
-        SELECT
-          v.Desenho_OrdemSerial AS "Ordem_Serial",
-          v.Desenho_CodMat      AS "CodMat",
-          v.Desenho_Descricao   AS "Descricao",
-          v.m2                  AS "Cantidad"
-        FROM dbo.SAGA_View_Ficha_Componentes_Colombia v
-        WHERE v.Desenho_Operation = '2900'
-          AND LTRIM(RTRIM(v.unMed)) = 'UND'
-          AND v.Desenho_Descricao LIKE '%TNT%'
-      `,
+      materiales: ['TNT'],
     },
-    /* Tejidos: igual que Mallas (Operation 2900, unidad UND), pero los
-       materiales son los que tienen PVTE, PUTE o "tejido" en la descripción. */
     tejidos: {
-      ordenesPendientes: `
-        SELECT
-          v.Desenho_OrdemSerial AS "Ordem_Serial",
-          v.Desenho_CodMat      AS "CodMat",
-          v.Desenho_Descricao   AS "Descricao",
-          v.m2                  AS "Cantidad"
-        FROM dbo.SAGA_View_Ficha_Componentes_Colombia v
-        WHERE v.Desenho_Operation = '2900'
-          AND LTRIM(RTRIM(v.unMed)) = 'UND'
-          AND (v.Desenho_Descricao LIKE '%PVTE%'
-            OR v.Desenho_Descricao LIKE '%PUTE%'
-            OR v.Desenho_Descricao LIKE '%TEJIDO%')
-      `,
+      materiales: ['PVTE', 'PUTE', 'TEJIDO'],
     }
-  }
+  },
+
+  /* Componentes de Mallas y Tejidos (una sola consulta para las dos áreas):
+     Operation 2900, unidad UND, y o bien el nombre de SAGA ya dice el
+     material, o bien el código empieza por 0000000006 (los que pueden traer
+     el nombre equivocado: se corrige con ODATA_Fullkit y recién ahí se
+     filtra por material). Cantidad = m2, que con unMed UND trae cuántas
+     unidades lleva la orden (1,000 / 2,000). Puestodetrabajo y Vehículo salen
+     del BUSCARV de Calendario; el agrupado lo hace server/reglas-mallas.js. */
+  componentesPorCodmat: `
+    SELECT
+      v.Desenho_OrdemSerial AS "Ordem_Serial",
+      v.Desenho_CodMat      AS "CodMat",
+      v.Desenho_Descricao   AS "Descricao",
+      v.m2                  AS "Cantidad"
+    FROM dbo.SAGA_View_Ficha_Componentes_Colombia v
+    WHERE v.Desenho_Operation = '2900'
+      AND LTRIM(RTRIM(v.unMed)) = 'UND'
+      AND (v.Desenho_CodMat LIKE '0000000006%'
+        OR v.Desenho_Descricao LIKE '%TNT%'
+        OR v.Desenho_Descricao LIKE '%PVTE%'
+        OR v.Desenho_Descricao LIKE '%PUTE%'
+        OR v.Desenho_Descricao LIKE '%TEJIDO%')
+  `
 };

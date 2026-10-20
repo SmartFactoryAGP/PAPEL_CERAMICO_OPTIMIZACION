@@ -15,9 +15,10 @@
 
    Sin SQL ni archivos: se prueba sola (tools/pruebas/mallas.js). */
 
-// del más avanzado al menos avanzado (orden en que el stock cubre la necesidad)
-const PUESTOS = ['12P_ENSA', '11ZUND', '09IOX_S', '09IOX_E', '08PULIDO', '07RECORT', '06CURVAD', '05EMPLA',
-                 '04SER_VT', '03SERIG', '02CNC', '01CORTE', 'PLANEACION'];
+// del más avanzado al menos avanzado (orden en que el stock cubre la necesidad).
+// Escritos como en Calendario (revisado en la tabla real: "05EMPAL", no "05EMPLA").
+const PUESTOS = ['12P_ENSA', '11ZUND', '09IOX_S', '09IOX_E', '08PULIDO', '07RECORT', '06CURVAD', '05EMPAL',
+                 '04SER_VT', '04SER_TT', '03SERIG', '02CNC', '01CORTE', 'PLANEACION'];
 const PRIORIDAD = new Map(PUESTOS.map((p, i)=>[p, i]));
 const texto = v => String(v==null ? '' : v).trim();
 const puestoNorm = v => texto(v).toUpperCase();

@@ -255,6 +255,60 @@ function generarStickersMallasPDF(lineas, usuario, fecha){
   doc.save(`stickers_${typeof areaActualId!=='undefined' ? areaActualId : 'rack'}_${new Date().toISOString().slice(0,10)}.pdf`);
 }
 
+/* =========================================================
+   STICKER DE TEJIDOS — uno por tejido, como el que ya usaban
+   =========================================================
+   POSICIÓN (grande), material, fecha y hora, responsables, resistencias 1
+   y 2 y ensamble. Sin "puntos negros" ni código de barras (pedido
+   explícito). Usa toda la etiqueta (ajustado con la ZD230 real). */
+// fecha en números (20/10/2026): deja agrandar la letra sin que un mes largo se salga del borde
+const fechaHoraTejido = iso => { const d = iso ? new Date(iso) : new Date();
+  return { fecha: d.toLocaleDateString('es-CO', { day:'2-digit', month:'2-digit', year:'numeric' }), hora: d.toLocaleTimeString('es-CO', { hour:'2-digit', minute:'2-digit' }) }; };
+const corta = (t, n) => { t = String(t||''); return t.length > n ? t.slice(0, n-1) + '…' : t; };
+/* Medidas tomadas de la etiqueta real impresa en la ZD230 (100 x 30 mm): en la
+   fuente A0 cada carácter ocupa ~0,5 x el ancho pedido. Va de 2 a ~28 mm de alto. */
+function zplStickerTejido(u, posicion){
+  const f = fechaHoraTejido(u.fecha), e = v => escaparZPL(v);
+  const t = (x, y, alto, ancho, texto) => `^FO${mmAdots(x)},${mmAdots(y)}^A0N,${mmAdots(alto)},${mmAdots(ancho)}^FD${texto}^FS`;
+  return [
+    '^XA', '^CI28', `^PW${mmAdots(100)}`, `^LL${mmAdots(30)}`,
+    // izquierda: la POSICIÓN, enorme (en la foto "A15.1" midió 19 mm con ancho 8: con 13,5, ~33 mm)
+    t(3, 2, 2.6, 2.6, 'POSICIÓN'),
+    t(2.5, 4.8, 15.5, 13.5, e(posicion)),
+    // derecha (de 39 a 97 mm): material, fecha y responsable
+    t(39, 2, 4.2, 3.6, e(corta(u.nombre, 30))),
+    t(39, 7, 2.6, 2.6, 'FECHA'),
+    t(49, 6.6, 3.6, 3.2, `${e(f.fecha)}  ${e(f.hora)}`),
+    t(39, 11.2, 2.6, 2.6, 'RESPONSABLE'),
+    t(39, 13.6, 6.6, 5.6, e(corta(u.responsables, 20))),
+    // abajo, separado por una línea: las resistencias y el ensamble, con su nombre completo
+    `^FO${mmAdots(2.5)},${mmAdots(20.7)}^GB${mmAdots(95)},3,3^FS`,
+    t(3, 21.6, 2.6, 2.6, 'RESISTENCIA 1'),  t(3, 24, 4.4, 4, e(corta(u.resistencia1, 14))),
+    t(36, 21.6, 2.6, 2.6, 'RESISTENCIA 2'), t(36, 24, 4.4, 4, e(corta(u.resistencia2||'-', 14))),
+    t(69, 21.6, 2.6, 2.6, 'ENSAMBLE'),      t(69, 24, 4.4, 4, e(corta(u.ensamble||'-', 14))),
+    '^XZ'
+  ].join('\n');
+}
+async function imprimirStickerTejidoZPL(unidad, posicion){ return mandarZPL(zplStickerTejido(unidad, posicion)); }
+function generarStickerTejidoPDF(u, posicion){
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({unit:'mm', format:[100,30], orientation:'landscape'});
+  const f = fechaHoraTejido(u.fecha);
+  doc.setDrawColor(0); doc.setLineWidth(0.4); doc.rect(1,1,98,28);
+  // mismo diseño que el de la Zebra (zplStickerTejido)
+  const rotulo = (t, x, y) => { doc.setFont('helvetica','bold'); doc.setFontSize(6.5); doc.setTextColor(40,40,110); doc.text(t, x, y); doc.setTextColor(0); };
+  rotulo('POSICIÓN', 3, 4.4);
+  doc.setFont('helvetica','bold'); doc.setFontSize(40); doc.text(String(posicion), 2.5, 18);
+  doc.setFontSize(11); doc.text(corta(u.nombre, 30), 39, 5.6);
+  rotulo('FECHA', 39, 9.4); doc.setFont('helvetica','bold'); doc.setFontSize(10); doc.text(`${f.fecha}  ${f.hora}`, 49, 9.4);
+  rotulo('RESPONSABLE', 39, 13.4); doc.setFont('helvetica','bold'); doc.setFontSize(17); doc.text(corta(u.responsables, 20), 39, 19.2);
+  doc.setLineWidth(0.4); doc.line(2.5, 20.8, 97.5, 20.8);
+  rotulo('RESISTENCIA 1', 3, 23.6); rotulo('RESISTENCIA 2', 36, 23.6); rotulo('ENSAMBLE', 69, 23.6);
+  doc.setFont('helvetica','bold'); doc.setFontSize(12);
+  doc.text(corta(u.resistencia1, 14), 3, 28); doc.text(corta(u.resistencia2||'—', 14), 36, 28); doc.text(corta(u.ensamble||'—', 14), 69, 28);
+  doc.save(`sticker_tejido_${String(posicion).replace(/[^\w.-]/g,'')}_${new Date().toISOString().slice(0,10)}.pdf`);
+}
+
 async function mandarZPL(zpl){
   const res = await fetch(ordBridgeUrl()+'/api/imprimir-zpl', {
     method:'POST', headers: ordApiHeaders({'Content-Type':'application/json'}),

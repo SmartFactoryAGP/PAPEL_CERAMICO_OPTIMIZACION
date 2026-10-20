@@ -102,33 +102,51 @@ CREATE TABLE rack.MallasMovimientoLineas (
   PRIMARY KEY (MovimientoId, Linea)
 );
 
-/* ---------- Stock de TEJIDOS (PVTE, PUTE, tejido — igual que Mallas, tablas propias) ----------
-   No va por orden ni por casilla: se da entrada a lo fabricado (un sticker
-   por tejido) y salida a lo que se usa. El stock descuenta la necesidad de
-   Lista de corte. CodMat sin los 9 ceros iniciales de SAP. */
-CREATE TABLE rack.TejidosStock (
+/* ---------- Rack de TEJIDOS (PVTE, PUTE, tejido): una pieza por POSICIÓN ----------
+   Cada posición (A1.1, B12.1…) es de un tamaño (P, G, XG); cada tejido tiene
+   su tamaño. Entra uno a uno, en la primera posición libre de su tamaño (o
+   una más grande), con foto del calentamiento (archivo en el puente),
+   responsables y resistencias. El stock por CodMat = posiciones ocupadas. */
+CREATE TABLE rack.TejidosPosiciones (
+  Posicion       VARCHAR(12)   NOT NULL PRIMARY KEY,
+  Tamano         VARCHAR(3)    NOT NULL CHECK (Tamano IN ('P','G','XG'))
+);
+CREATE TABLE rack.TejidosTamanos (                   -- tamaño de cada tejido (Excel + "Asignar" en la app)
   CodMat         VARCHAR(18)   NOT NULL PRIMARY KEY,
-  Descripcion    NVARCHAR(120) NULL,
-  Cantidad       INT           NOT NULL CHECK (Cantidad >= 0)
+  Tamano         VARCHAR(3)    NOT NULL CHECK (Tamano IN ('P','G','XG')),
+  Nombre         NVARCHAR(120) NULL,
+  Vehiculo       NVARCHAR(120) NULL,                 -- VEHICULO_ del Excel
+  Geometria      NVARCHAR(60)  NULL                  -- GEOMETRIA_ del Excel
 );
-CREATE TABLE rack.TejidosMovimientos (               -- un registro por cada entrada o salida registrada
-  Id             BIGINT IDENTITY PRIMARY KEY,
-  IdOrigen       VARCHAR(20)   NULL,
-  IdCliente      VARCHAR(64)   NULL,               -- contra registros duplicados (doble clic, reintento)
-  Usuario        NVARCHAR(40)  NULL,
-  Nota           NVARCHAR(200) NULL,
-  Fecha          DATETIME2     NOT NULL DEFAULT SYSDATETIME()
-);
-CREATE UNIQUE INDEX UX_TejidosMovimientos_IdCliente ON rack.TejidosMovimientos(IdCliente) WHERE IdCliente IS NOT NULL;
-CREATE TABLE rack.TejidosMovimientoLineas (
-  MovimientoId   BIGINT        NOT NULL REFERENCES rack.TejidosMovimientos(Id),
-  Linea          INT           NOT NULL,
-  Tipo           VARCHAR(8)    NOT NULL CHECK (Tipo IN ('entrada','salida')),
+CREATE TABLE rack.TejidosRack (                      -- lo que hay hoy: una pieza por posición
+  Posicion       VARCHAR(12)   NOT NULL PRIMARY KEY REFERENCES rack.TejidosPosiciones(Posicion),
+  IdUnidad       VARCHAR(20)   NOT NULL,
   CodMat         VARCHAR(18)   NOT NULL,
-  Descripcion    NVARCHAR(120) NULL,
-  Cantidad       INT           NOT NULL CHECK (Cantidad > 0),
-  PRIMARY KEY (MovimientoId, Linea)
+  Nombre         NVARCHAR(120) NULL,
+  Vehiculo       NVARCHAR(120) NULL,
+  Geometria      NVARCHAR(60)  NULL,
+  Tamano         VARCHAR(3)    NOT NULL,
+  Responsables   NVARCHAR(80)  NOT NULL,
+  Resistencia1   NVARCHAR(40)  NOT NULL,
+  Resistencia2   NVARCHAR(40)  NULL,
+  Ensamble       NVARCHAR(60)  NULL,
+  Nota           NVARCHAR(200) NULL,
+  Foto           VARCHAR(40)   NOT NULL,           -- archivo en server/datos/tejidos/fotos/
+  Usuario        NVARCHAR(40)  NULL,
+  Ingreso        DATETIME2     NOT NULL
 );
+CREATE TABLE rack.TejidosHistorial (                 -- entradas, salidas y tamaños asignados (solo se agrega)
+  Id             BIGINT IDENTITY PRIMARY KEY,
+  Evento         VARCHAR(10)   NOT NULL,           -- entrada | salida | tamano
+  Posicion       VARCHAR(12)   NULL,
+  CodMat         VARCHAR(18)   NULL,
+  Tamano         VARCHAR(3)    NULL,
+  Datos          NVARCHAR(MAX) NULL,               -- la pieza completa (responsables, resistencias, foto…), JSON
+  Usuario        NVARCHAR(40)  NULL,
+  Fecha          DATETIME2     NOT NULL
+);
+CREATE INDEX IX_TejidosHistorial_Fecha ON rack.TejidosHistorial(Fecha);
+CREATE INDEX IX_TejidosHistorial_CodMat ON rack.TejidosHistorial(CodMat, Fecha);  -- la pestaña "Historial" busca por CodMat
 
 /* ---------- Inventario de TECOFLEX (por cantidad: material + medida) ---------- */
 CREATE TABLE rack.TecoflexStock (

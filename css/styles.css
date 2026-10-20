@@ -698,13 +698,169 @@ td.name{ max-width:120px; overflow:hidden; text-overflow:ellipsis; white-space:n
   .logoCard{ margin-bottom:24px; width:140px; height:84px }
   .areaSwitchBtn span{ display:none }
 }
+.txtCorto{ display:none }
 @media (max-width: 720px){
   .areaCards{ grid-template-columns:1fr }
-  .topbar{ gap:12px; padding:0 14px }
+  .topbar{ gap:8px; padding:0 10px; height:56px }
   .brandText{ display:none }
-  .subbar{ padding:0 10px; overflow-x:auto }
+  .brandLogo{ width:44px; height:32px } .brandLogo img{ width:34px }
+  /* celular: logo · áreas · avatar + "Salir" (sin nombre ni etiqueta de rol: no entran en 390 px) */
+  .areaSwitch{ margin:0 auto; min-width:0; gap:2px; padding:3px }
+  .areaSwitchBtn{ padding:7px 9px }
+  .sessionIn{ gap:6px }
+  .sessionUser, #authRolActual{ display:none !important }
+  .avatar{ width:30px; height:30px }
+  #authLogoutBtn{ padding:7px 10px; font-size:12.5px; white-space:nowrap }
+  #authLogoutBtn .txtLargo{ display:none } #authLogoutBtn .txtCorto{ display:inline }
+  .subbar{ padding:0 6px; overflow-x:auto; gap:8px }
+  .viewTab{ padding:0 10px; white-space:nowrap }
+  .subbarRight{ gap:8px; flex:none }
+  .liveTag{ padding:4px 8px } .liveTag > span{ display:none } /* solo el punto verde */
   .areaTag{ display:none }
   .appMain{ padding:12px }
+  /* nada más ancho que la pantalla */
+  .stagepanel, #ordStagePanel > .stagepanel{ min-width:0 }
+  .barraLista .dayStrip{ flex-direction:column; align-items:flex-start; width:100%; min-width:0 }
+  .barraLista .kpiRow{ width:100% } .barraLista .kpiRow .stat.big{ flex:1; min-width:0 }
+}
+
+/* ---------- Rack de Tejidos: una pieza por posición, con foto ---------- */
+.req{ color:var(--warn); font-weight:800 }
+.tjTam{ display:inline-block; min-width:24px; text-align:center; padding:1px 7px; border-radius:6px; font:800 11px var(--font-ui); background:var(--area-soft); color:var(--area-ink) }
+.tjAsignar{ padding:3px 10px; font-size:11px }
+.tjTamSel{ height:30px; padding:0 6px; border-radius:8px; border:1px solid var(--area); font:700 12px var(--font-ui) }
+.tjAviso{ color:var(--warn); font-weight:700 }
+.tjEntrada{ gap:12px }
+.tjEntrada form{ display:flex; flex-direction:column; gap:10px }
+.tjElegido{ padding:10px 12px; border-radius:11px; background:var(--area-soft); border:1px solid color-mix(in srgb, var(--area) 25%, transparent); display:flex; flex-direction:column; gap:3px }
+.tjElegido b{ font-size:13.5px; color:var(--ink) }
+.tjElegido small{ font-size:11.5px; color:var(--muted) }
+.tjElegidoTam{ font-size:12.5px; color:var(--ink2); margin-top:3px }
+.tjElegidoTam select{ height:30px; border-radius:8px; border:1px solid var(--area); font-weight:700 }
+.tjFotoBtn{ display:flex; align-items:center; justify-content:center; gap:8px; min-height:48px; padding:10px; border-radius:12px; border:2px dashed color-mix(in srgb, var(--area) 45%, var(--line)); background:#fff; color:var(--area-ink); font:800 14px var(--font-ui); cursor:pointer }
+.tjFotoBtn:hover{ background:var(--area-soft) }
+.tjFotoBtn input{ position:absolute; width:1px; height:1px; opacity:0; pointer-events:none }
+.tjFotoPrev{ width:100%; max-height:220px; object-fit:contain; border-radius:10px; border:1px solid var(--line-soft); background:var(--bg2); margin-top:6px }
+.tjResultado{ display:flex; flex-direction:column; align-items:center; gap:2px; padding:14px; border-radius:14px; background:var(--good-soft); border:1px solid rgba(19,135,74,.3); text-align:center }
+.tjResultado span{ font-size:11.5px; font-weight:800; text-transform:uppercase; letter-spacing:.06em; color:var(--good) }
+.tjResultado b{ font:800 44px/1.05 var(--font-display); color:var(--ink); letter-spacing:-.02em }
+.tjResultado small{ font-size:12px; color:var(--ink2) }
+.tjRackPanel .kpiRow b small{ font-size:14px; color:var(--muted); font-weight:700 }
+.tjBuscar{ flex:1 1 220px; max-width:340px }
+.tjLeyenda{ display:flex; flex-wrap:wrap; gap:6px 16px; font-size:11.5px; color:var(--muted); margin-top:-4px }
+.tjLeyenda span{ display:inline-flex; align-items:center; gap:6px }
+.tjL{ width:14px; height:14px; border-radius:4px; display:inline-block }
+.tjL.libre{ background:#fff; border:1.5px dashed var(--line-strong) }
+.tjL.ocupada{ background:var(--area) }
+.tjMapa{ flex:1 1 auto; overflow-y:auto; min-height:0; display:flex; flex-direction:column; gap:8px; padding-right:4px }
+.tjEstante{ display:grid; grid-template-columns:44px 1fr; gap:8px; align-items:start }
+.tjEstNom{ font:800 12px var(--font-mono); color:var(--muted); padding-top:12px; text-align:right }
+.tjCeldas{ display:flex; flex-wrap:wrap; gap:6px }
+.tjCelda{ width:116px; min-height:52px; display:flex; flex-direction:column; align-items:flex-start; gap:1px; padding:6px 9px; border-radius:10px; text-align:left; box-shadow:none; font-family:var(--font-ui); cursor:default }
+.tjCelda b{ font:800 13px var(--font-mono); color:inherit }
+.tjCelda small{ font-size:10px; font-weight:800; letter-spacing:.05em; opacity:.75 }
+.tjCelda i{ font-style:normal; font-size:10.5px; line-height:1.2; width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap }
+.tjCelda.libre{ background:#fff; border:1.5px dashed var(--line-strong); color:var(--muted) }
+.tjCelda.libre:hover{ background:#fff; box-shadow:none }
+.tjCelda.ocupada{ background:var(--area); border:1.5px solid var(--area); color:#fff; cursor:pointer }
+.tjCelda.ocupada:hover{ filter:brightness(1.08); box-shadow:var(--shadow-1) }
+.tjCelda.t-G{ width:136px } .tjCelda.t-XG{ width:160px }
+.tjDetalleCard{ width:min(560px, 94vw) }
+.tjDetBody{ flex-direction:column; gap:12px }
+.tjDatos{ display:grid; grid-template-columns:auto 1fr; gap:6px 14px; margin:0; font-size:13px }
+.tjDatos dt{ font-weight:800; color:var(--muted); font-size:11.5px; text-transform:uppercase; letter-spacing:.05em }
+.tjDatos dd{ margin:0; color:var(--ink) }
+.tjFotoDet img{ width:100%; max-height:52vh; object-fit:contain; border-radius:12px; border:1px solid var(--line-soft); background:var(--bg2) }
+.tjDetAcciones{ gap:8px }
+.tjSalidaBtn{ background:var(--warn) !important; border-color:var(--warn) !important }
+.tjIrRack > button{ width:100% }
+/* lista desplegable de tejidos (propia, también en el iPhone) */
+.tjCombo{ position:relative }
+.tjComboCaja{ position:relative }
+.tjComboCaja input{ width:100%; padding-right:44px }
+.tjComboBtn{ position:absolute; right:4px; top:50%; transform:translateY(-50%); width:36px; height:36px; padding:0; border:0; border-radius:8px; background:transparent; box-shadow:none; color:var(--muted); display:grid; place-items:center }
+.tjComboBtn:hover{ background:var(--bg2); box-shadow:none; color:var(--ink) }
+.tjComboBtn svg{ width:20px; height:20px; fill:none; stroke:currentColor; stroke-width:2.4; stroke-linecap:round; stroke-linejoin:round }
+.tjCombo input[aria-expanded="true"] + .tjComboBtn svg{ transform:rotate(180deg) }
+.tjLista{ position:absolute; left:0; right:0; top:calc(100% + 4px); z-index:30; max-height:min(380px, 55vh); overflow-y:auto; overscroll-behavior:contain;
+  background:#fff; border:1px solid var(--line); border-radius:12px; box-shadow:0 14px 34px rgba(15,23,42,.18); padding:4px }
+.tjLista[hidden]{ display:none }
+.tjListaGrupo{ position:sticky; top:-4px; z-index:1; margin:0 -4px; padding:7px 12px 5px; background:#fff; font-size:10.5px; font-weight:800; text-transform:uppercase; letter-spacing:.06em; color:var(--area-ink); border-bottom:1px solid var(--line-soft) }
+.tjOpc{ display:grid; grid-template-columns:1fr auto; gap:1px 10px; width:100%; padding:9px 10px; border:0; border-radius:9px; background:transparent; text-align:left; box-shadow:none; font-family:var(--font-ui); color:var(--ink); cursor:pointer }
+.tjOpc:hover, .tjOpc.marcada{ background:var(--area-soft); box-shadow:none }
+.tjOpc.elegida{ box-shadow:inset 3px 0 0 var(--area) }
+.tjOpc + .tjOpc{ margin-top:1px }
+.tjOpcNom{ grid-column:1; font:800 13.5px/1.25 var(--font-mono); overflow-wrap:anywhere }
+.tjOpcSub{ grid-column:1; font-size:11.5px; color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap }
+.tjOpcTags{ grid-column:2; grid-row:1 / span 2; display:flex; flex-direction:column; align-items:flex-end; justify-content:center; gap:3px }
+.tjFalta{ font-size:10.5px; font-weight:800; padding:1px 7px; border-radius:6px; background:#FFF1E6; color:#B54708; white-space:nowrap }
+.tjSinTam{ font-size:10.5px; font-weight:700; color:var(--warn); white-space:nowrap }
+.tjListaMas{ padding:10px 12px; font-size:12px; color:var(--muted); text-align:center }
+/* pestañas del rack: Por material · Mapa · Historial */
+.tjTabs{ display:inline-flex; gap:2px; padding:3px; border-radius:11px; background:var(--bg2); border:1px solid var(--line-soft) }
+.tjTab{ padding:6px 14px; border-radius:8px; border:0; background:transparent; color:var(--muted); font:700 12.5px var(--font-ui); box-shadow:none; width:auto }
+.tjTab:hover{ background:#fff; color:var(--ink); box-shadow:none }
+.tjTab.active{ background:#fff; color:var(--area-ink); box-shadow:var(--shadow-1) }
+.tjRackPanel .panelHead{ align-items:center; justify-content:flex-start }
+.tjRackPanel > .tjBuscar{ flex:none; max-width:420px } /* el panel es una columna: sin esto, el ancho base se volvía alto */
+.tjRackPanel > .tjBuscar[hidden]{ display:none }
+.tjActualizar{ margin-left:auto; padding:6px 12px; font-size:12.5px; width:auto }
+.tjVista{ flex:1 1 auto; min-height:0; display:flex; flex-direction:column; gap:8px }
+.tjVista[hidden]{ display:none }
+/* por material: lista (izquierda) y sus posiciones (derecha) */
+.tjPorMaterial{ flex:1 1 auto; min-height:0; display:grid; grid-template-columns:minmax(0, 1.25fr) minmax(0, 1fr); gap:12px }
+.tjMateriales, .tjUbicaciones{ overflow-y:auto; min-height:0; display:flex; flex-direction:column; gap:6px; padding-right:4px }
+.tjMat{ display:grid; grid-template-columns:1fr auto; align-items:center; gap:2px 12px; width:100%; padding:9px 12px; border-radius:11px; border:1px solid var(--line-soft); background:#fff; text-align:left; box-shadow:none; font-family:var(--font-ui); color:var(--ink); cursor:pointer }
+.tjMat:hover{ border-color:color-mix(in srgb, var(--area) 45%, var(--line)); background:#fff; box-shadow:var(--shadow-1) }
+.tjMat.activo{ border-color:var(--area); background:var(--area-soft); box-shadow:inset 3px 0 0 var(--area) }
+.tjMatVeh{ grid-column:1; font-size:11px; font-weight:700; color:var(--muted); text-transform:uppercase; letter-spacing:.03em; overflow:hidden; text-overflow:ellipsis; white-space:nowrap }
+.tjMatNom{ grid-column:1; font:800 14.5px/1.2 var(--font-mono); color:var(--ink); overflow-wrap:anywhere }
+.tjMatTags{ grid-column:1; display:flex; flex-wrap:wrap; gap:4px; margin-top:2px }
+.tjMatTags span{ font-size:10.5px; font-weight:800; padding:1px 7px; border-radius:6px; background:var(--bg2); color:var(--ink2) }
+.tjMatCant{ grid-column:2; grid-row:1 / span 3; font:800 28px/1 var(--font-display); color:var(--area-ink); min-width:36px; text-align:right }
+.tjUbiHead{ display:flex; flex-direction:column; gap:2px; padding:4px 2px 8px; border-bottom:1px solid var(--line-soft) }
+.tjUbiHead b{ font:800 14px var(--font-mono); overflow-wrap:anywhere }
+.tjUbiHead small{ font-size:11.5px; color:var(--muted) }
+.tjUbi{ display:grid; grid-template-columns:auto 1fr auto; align-items:center; gap:10px; width:100%; padding:9px 12px; border-radius:11px; border:1px solid var(--line-soft); background:#fff; text-align:left; box-shadow:none; font-family:var(--font-ui); color:var(--ink); cursor:pointer }
+.tjUbi:hover{ border-color:var(--area); background:#fff; box-shadow:var(--shadow-1) }
+.tjUbi > b{ font:800 18px var(--font-mono); color:var(--area-ink); min-width:62px }
+.tjUbi span{ display:flex; flex-direction:column; font-size:12px; color:var(--ink2); min-width:0 }
+.tjUbi span small{ color:var(--muted); font-size:11px }
+.tjUbi > i{ font-style:normal; font-size:11px; font-weight:700; color:var(--area-ink) }
+/* historial */
+.tjHistFiltros{ display:flex; flex-wrap:wrap; gap:8px; align-items:center }
+.tjHistFiltros select{ height:34px; padding:0 8px; border-radius:9px; border:1px solid var(--line); background:#fff; font:600 12.5px var(--font-ui) }
+.tjHistFiltros .inputIcon{ flex:1 1 220px; max-width:360px }
+.tjHistResumen{ font-size:12px; color:var(--muted) }
+.tjHistResumen b{ color:var(--ink) }
+.tjHistTabla{ flex:1 1 auto; min-height:0; overflow:auto; border:1px solid var(--line-soft); border-radius:11px }
+.tjHistTabla table{ width:100%; border-collapse:collapse; font-size:12px }
+.tjHistTabla th{ position:sticky; top:0; z-index:1; background:var(--bg2); text-align:left; font-size:11px; font-weight:800; color:var(--muted); text-transform:uppercase; letter-spacing:.04em; padding:8px 10px; white-space:nowrap }
+.tjHistTabla td{ padding:7px 10px; border-top:1px solid var(--line-soft); vertical-align:top }
+.tjHistTabla td.pos{ font:800 13px var(--font-mono) }
+.tjHistTabla td.mat{ font-family:var(--font-mono); font-weight:700; overflow-wrap:anywhere; min-width:160px }
+.tjEv{ display:inline-block; padding:2px 8px; border-radius:6px; font-size:11px; font-weight:800; white-space:nowrap }
+.tjEv.entrada{ background:var(--good-soft); color:var(--good) }
+.tjEv.salida{ background:#FDECEC; color:var(--warn) }
+.tjEv.tamano{ background:var(--bg2); color:var(--ink2) }
+.tjVerFoto{ padding:3px 9px; font-size:11px; width:auto }
+/* en el celular (y tablets angostas): una sola columna, todo grande para el dedo */
+@media (max-width: 900px){
+  body[data-area="tejidos"] #viewRack{ flex-direction:column; overflow-y:auto; overflow-x:hidden }
+  body[data-area="tejidos"] #viewRack > .panel{ flex:0 0 auto; width:auto; min-width:0; overflow:visible }
+  body[data-area="tejidos"] .tjMapa{ overflow:visible }
+  .tjEntrada input, .tjEntrada select{ min-height:46px; font-size:16px !important } /* 16px: el celular no hace zoom al escribir */
+  #tjEntrar{ min-height:52px; font-size:16px }
+  .tjCelda{ width:calc(33.333% - 4px); min-height:58px }
+  .tjCelda.t-G, .tjCelda.t-XG{ width:calc(50% - 3px) }
+  .tjEstante{ grid-template-columns:1fr }
+  .tjEstNom{ text-align:left; padding-top:0 }
+  .tjDetAcciones button{ flex:1; min-height:48px }
+  .tjPorMaterial{ grid-template-columns:1fr }
+  body[data-area="tejidos"] .tjMateriales, body[data-area="tejidos"] .tjUbicaciones{ overflow:visible }
+  body[data-area="tejidos"] .tjHistTabla{ max-height:70vh }
+  .tjTabs{ order:3; width:100% } .tjTab{ flex:1; min-height:40px }
+  .tjHistFiltros select{ flex:1 1 140px; height:42px; font-size:16px }
 }
 
 /* stock de un material que no está en la lista (se muestra para que no quede oculto) */
@@ -854,7 +1010,15 @@ td.name{ max-width:120px; overflow:hidden; text-overflow:ellipsis; white-space:n
 @media (max-width: 1100px){
   #ordStagePanel{ flex-direction:column }
   #ordStagePanel > .sidepanel{ flex:0 0 auto; min-width:0 }
+  #ordStagePanel > .stagepanel{ min-width:0 } /* en columna: la tabla se desplaza adentro, la página no se ensancha */
   .barraLista #ordBridgeStatus{ text-align:left }
+}
+/* celular: la vista se desplaza entera y cada cuadro toma su alto (si no, la tabla quedaba aplastada) */
+@media (max-width: 720px){
+  #viewOrdenes{ overflow-y:auto; overflow-x:hidden }
+  #viewOrdenes > .panel, #ordStagePanel{ flex:0 0 auto }
+  #ordStagePanel > .panel{ flex:0 0 auto; overflow:visible }
+  #ordStagePanel .ordTableScroll{ flex:none; max-height:65vh; min-height:160px }
 }
 /* ---------- botón "Excel" de la Lista de corte (esquina superior derecha) ---------- */
 .panelHead .excelBtn{ margin-left:auto }

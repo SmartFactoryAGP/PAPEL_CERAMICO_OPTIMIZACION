@@ -37,7 +37,7 @@ prueba('Migración de archivos a SQL', async limpiar=>{
     papelRack: 2, papelHistorial: 4, papelAprobaciones: 0, papelAprobacionesHistorial: 0,
     tecoflexMovimientos: 3, tecoflexLineas: 5, tecoflexStockFilas: 2, tecoflexStockUnidades: 85,
     mallasMovimientos: 2, mallasLineas: 3, mallasStockFilas: 2, mallasStockUnidades: 5,
-    tejidosMovimientos: 0, tejidosLineas: 0, tejidosStockFilas: 0, tejidosStockUnidades: 0 });
+    tejidosPosiciones: 0, tejidosTamanos: 0, tejidosEnRack: 0, tejidosHistorial: 0 });
   ok(`totales: ${JSON.stringify(tot)}`);
 
   // el stock que se migra es exactamente el que muestra la app

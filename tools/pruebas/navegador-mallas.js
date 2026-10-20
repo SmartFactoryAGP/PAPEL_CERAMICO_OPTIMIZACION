@@ -110,12 +110,11 @@ prueba('Navegador: Mallas (lista por CodMat, entrada con stickers, salida escane
   assert.strictEqual(await A.ev(`document.body.getAttribute('data-area')`), 'tejidos');
   assert.strictEqual(await A.ev(`msEntrada.length`), 0, 'el carrito de Mallas pasó a Tejidos');
   assert.strictEqual(await A.ev(`document.getElementById('msEntStatus').textContent`), '', 'quedó un mensaje de Mallas en Tejidos');
-  assert.deepStrictEqual(await A.ev(`[...document.querySelectorAll('#ordTableWrap tr.msFila')].map(tr=>tr.cells[0].textContent.trim() + ' ' + tr.cells[5].textContent.trim())`), ['600050001 MERCEDES BENZ GLS 450']);
-  await A.captura(path.join(CAPTURAS, 'tejidos-lista.png'));
+  // (Tejidos suma la columna Tamaño: el vehículo queda en la 7ª)
+  assert.deepStrictEqual(await A.ev(`[...document.querySelectorAll('#ordTableWrap tr.msFila')].map(tr=>tr.cells[0].textContent.trim() + ' ' + tr.cells[6].textContent.trim())`), ['600050001 MERCEDES BENZ GLS 450']);
   await A.ev(`document.getElementById('tabRack').click(); 1`); await sleep(700);
-  assert.ok(/tejidos en stock/i.test(await A.ev(`document.querySelector('#msKpiStock').closest('.stat').textContent`)));
-  assert.ok(/sticker por tejido/.test(await A.ev(`document.querySelector('#viewRack .panel.controls:not([hidden]) .hint').textContent`)));
-  assert.strictEqual(await A.ev(`document.querySelector('#msStockWrap').textContent.includes('600019608')`), false, 'en Tejidos no tiene que verse el stock de Mallas');
+  // el Rack de Tejidos es otro (por posición, con foto): el stock de Mallas no se ve
+  assert.strictEqual(await A.ev(`!!document.querySelector('.tjEntrada').offsetParent && document.getElementById('msStockWrap').offsetParent===null`), true);
   await A.ev(`document.querySelector('[data-area-btn="mallas"]').click(); 1`); await sleep(500);
   assert.strictEqual(await A.ev(`msEntrada.map(l=>l.codmat).join()`), '600039800', 'al volver a Mallas tiene que estar su carrito');
   ok('Tejidos: su propia área (color fucsia), lista con PVTE, textos "tejido(s)", stock aparte; cada área con su carrito (al volver a Mallas sigue el suyo)');
