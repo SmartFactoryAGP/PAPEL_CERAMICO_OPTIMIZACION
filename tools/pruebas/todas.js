@@ -9,6 +9,7 @@ const PASOS = [
   ['Usuarios y permisos', path.join(__dirname, 'usuarios.js')],
   ['Inventario Tecoflex y carga', path.join(__dirname, 'inventario.js')],
   ['Consumo de Tecoflex por material y medida', path.join(__dirname, 'consumo.js')],
+  ['Historiales: el administrador elimina registros', path.join(__dirname, 'historial-admin.js')],
   ['Migración a SQL (script)', path.join(__dirname, 'migracion.js')],
   ['Seguridad (intentos de robo de datos)', path.join(__dirname, 'seguridad.js')],
   ['Papel: regla CURVE/NivelAGP y Aprobaciones de ZFER', path.join(__dirname, 'aprobaciones.js')],
@@ -19,9 +20,11 @@ const PASOS = [
   ['Navegador (Chrome)', path.join(__dirname, 'navegador.js')],
   ['Navegador: Lista de corte de papel y Aprobaciones', path.join(__dirname, 'navegador-aprobaciones.js')],
   ['Navegador: Mallas (entrada con stickers y salida)', path.join(__dirname, 'navegador-mallas.js')],
+  ['Impresión: cada usuario en su Zebra', path.join(__dirname, 'impresion.js')],
   ['Navegador: Rack de Tejidos en el celular', path.join(__dirname, 'navegador-tejidos.js')],
   ['Navegador: Nesting de Tecoflex (pedido de tiras)', path.join(__dirname, 'navegador-tecoflex-nesting.js')],
   ['Navegador: Rack de Tecoflex (vistas, consumo, celular)', path.join(__dirname, 'navegador-rack-tecoflex.js')],
+  ['Navegador: cambiar de área con la Lista en camino', path.join(__dirname, 'navegador-cambio-area.js')],
 ].filter(([, f])=>!(process.argv.includes('--sin-navegador') && path.basename(f).startsWith('navegador')));
 
 const resultados = [];

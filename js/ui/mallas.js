@@ -266,7 +266,8 @@ async function msRackRender(silencioso){
     return;
   }
   // la necesidad de Lista de corte (si esta persona la puede ver): de la memoria del puente, no de SQL
-  if(areaTieneVista('ordenes') && ordUltimaLista.area!==areaActualId) await ordRefrescar({auto:true});
+  // sin esperarla: el stock se ve ya, y se vuelve a dibujar cuando llegue la lista
+  if(areaTieneVista('ordenes') && ordUltimaLista.area!==areaActualId) ordRefrescar({auto:true}).then(()=>{ if(area===areaActualId) msDibujarStock(); });
   msDibujarStock();
 }
 function msAplicarTodo(data){
@@ -279,6 +280,7 @@ function msAplicarTodo(data){
    la versión lo ordena, igual que en Tecoflex. */
 function msAplicarResultado(r){
   if(!msEsMallas() || (r.area && r.area!==areaActualId) || r.version==null) return;
+  if(r.recargar){ msRackRender(true); return; } // el administrador borró movimientos: se vuelve a pedir todo
   if(msVersion>=0 && r.version<=msVersion) return;
   if(msVersion>=0 && r.version!==msVersion+1){ msRackRender(true); return; }
   msStock = new Map((r.stock||[]).map(s=>[s.material, { cantidad: s.cantidad, nombre: s.nombre || s.material }]));
@@ -315,14 +317,15 @@ function msDibujarStock(){
       </tr>`; }).join('')}</tbody></table>`
     : `<div class="empty">Todavía no hay ${msPiezas(0, false)} en stock. Se les da entrada desde Lista de corte.</div>`;
   const movs = msMovimientos.slice(0, 80);
-  document.getElementById('msMovs').innerHTML = movs.length ? `<table class="ordTable"><thead><tr><th>Fecha</th><th>Tipo</th><th>Detalle</th><th>Usuario</th></tr></thead><tbody>${
+  document.getElementById('msMovs').innerHTML = movs.length ? haBarra() + `<table class="ordTable"><thead><tr>${haTh()}<th>Fecha</th><th>Tipo</th><th>Detalle</th><th>Usuario</th></tr></thead><tbody>${
     movs.map(mv=>{
       const tipo = mv.items.every(l=>l.tipo==='entrada') ? 'entrada' : mv.items.every(l=>l.tipo==='salida') ? 'salida' : 'mixto';
-      return `<tr><td class="mono">${escapeHtml(new Date(mv.fecha).toLocaleString('es-CO', {dateStyle:'short', timeStyle:'short'}))}</td>
+      return `<tr>${haTd(mv.id)}<td class="mono">${escapeHtml(new Date(mv.fecha).toLocaleString('es-CO', {dateStyle:'short', timeStyle:'short'}))}</td>
         <td><span class="movTag ${tipo}">${tipo==='entrada' ? 'Entrada' : tipo==='salida' ? 'Salida' : 'Mixto'}</span></td>
         <td class="movDetalle"><div class="movItems">${mv.items.map(l=>`<span class="movItem ${l.tipo}">${l.tipo==='salida'?'−':'+'}${l.cantidad} <b>${escapeHtml(l.material)}</b></span>`).join('')}</div>${mv.nota ? `<small>${escapeHtml(mv.nota)}</small>` : ''}</td>
         <td>${escapeHtml(mv.usuario||'—')}</td></tr>`;
     }).join('')}</tbody></table>` : '<div class="empty">Todavía no hay movimientos.</div>';
+  haAplicar('msMovs', async ids=>{ await haEliminarMovimientos(ids); await msRackRender(true); });
 }
 
 /* Salida: cada escaneo (o "− Salida") suma 1 de ese CodMat, hasta lo que hay. */

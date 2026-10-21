@@ -127,6 +127,16 @@ function lineaInventario(area, it, i){
   return {linea:{tipo:it.tipo, material:mat.id, materialNombre:mat.nombre, codigo:mat.codigo||null, medida, cantidad}};
 }
 
+/* claves viejas de material -> la actual (campo "alias" en areas-config.js). */
+function normalizadorDe(area){
+  const alias = new Map();
+  (area.materiales||[]).forEach(m=>(m.alias||[]).forEach(a=>alias.set(a, m)));
+  return items => items.forEach(l=>{
+    const m = alias.get(l.material);
+    if(m){ l.material = m.id; l.materialNombre = m.nombre; l.codigo = m.codigo||null; }
+  });
+}
+
 function crear({ datos, notificar }){
   const inventarioPath = area => datos.rutas.inventario(area.id);
   const diarioPath     = area => datos.rutas.diario(area.id);
@@ -148,12 +158,7 @@ function crear({ datos, notificar }){
     inv = {version:0, stock:new Map(), movimientos:[], dias:new Map(), porIdCliente:new Map(), nombres: area.rack.porCodmat ? new Map() : null};
     // claves viejas de material -> la actual (campo "alias" en areas-config.js).
     // El diario NO se reescribe: la traducción es solo en memoria.
-    const alias = new Map();
-    (area.materiales||[]).forEach(m=>(m.alias||[]).forEach(a=>alias.set(a, m)));
-    const normalizar = items => items.forEach(l=>{
-      const m = alias.get(l.material);
-      if(m){ l.material = m.id; l.materialNombre = m.nombre; l.codigo = m.codigo||null; }
-    });
+    const normalizar = normalizadorDe(area);
     if(fs.existsSync(diario)){
       const texto = fs.readFileSync(diario, 'utf8');
       // si un apagón cortó la última línea a la mitad, el próximo movimiento
@@ -271,6 +276,53 @@ function crear({ datos, notificar }){
     return { status: 200, cuerpo: { ok: true, version: inv.version, movimiento, stock, hoy } };
   }
 
+  /* ADMINISTRADOR: borra movimientos del diario (por su id). El stock y el consumo se rehacen
+     del diario que queda, así que borrar una entrada de prueba también la quita del stock.
+     No se deja borrar si con eso algún stock quedaría negativo en algún momento (ej. una
+     entrada cuyas unidades ya salieron): hay que borrar también esas salidas.
+     Lo borrado queda guardado en eliminados.jsonl (quién, cuándo y el movimiento completo). */
+  function eliminar(area, ids, usuario){
+    exigirInventario(area);
+    const inv = de(area);
+    const quitar = new Set((Array.isArray(ids) ? ids : []).map(x=>String(x)).slice(0, 5000));
+    if(!quitar.size) throw errorHttp('No elegiste ningún movimiento.');
+    const archivo = diarioPath(area);
+    const normalizar = normalizadorDe(area);
+    const quedan = [], borrados = [], hallados = new Set();
+    (fs.existsSync(archivo) ? fs.readFileSync(archivo, 'utf8') : '').split('\n').forEach(t=>{
+      if(!t.trim()) return;
+      let mv; try { mv = JSON.parse(t); } catch(e){ quedan.push({ t }); return; } // ilegible: se conserva tal cual
+      if(quitar.has(mv.id)){ borrados.push({ t, mv }); hallados.add(mv.id); } else quedan.push({ t, mv });
+    });
+    if(hallados.size !== quitar.size) throw errorHttp('Alguno de esos movimientos ya no existe (¿lo borró otra PC?). Actualizá la pantalla.', 404);
+    // con lo que queda, el stock nunca puede bajar de cero
+    const stock = new Map();
+    for(const { mv } of quedan){
+      if(!mv) continue;
+      const items = JSON.parse(JSON.stringify(mv.items || []));
+      normalizar(items);
+      aplicarAlStock(stock, items);
+      const neg = [...stock].find(([, n])=>n < 0);
+      if(neg){
+        const [material, medida] = neg[0].split('|');
+        const nombre = (inv.nombres && inv.nombres.get(material)) || material;
+        throw errorHttp(`No se puede: después del movimiento del ${new Date(mv.fecha).toLocaleString('es-CO')} quedaría ${neg[1]} de ${nombre}${medida ? ' ' + medida + ' mm' : ''}. Hay salidas posteriores que dependen de lo que querés borrar: borralas también.`, 409);
+      }
+    }
+    const texto = quedan.map(x=>x.t).join('\n') + (quedan.length ? '\n' : '');
+    const tmp = archivo + '.tmp';
+    fs.appendFileSync(path.join(path.dirname(archivo), 'eliminados.jsonl'),
+      borrados.map(b=>JSON.stringify({ eliminadoPor: usuario, eliminadoEn: new Date().toISOString(), movimiento: b.mv })).join('\n') + '\n', 'utf8');
+    fs.writeFileSync(tmp, texto, 'utf8'); fs.renameSync(tmp, archivo);
+    // todo se rehace del diario nuevo; la versión sigue subiendo para que ninguna pantalla se quede con una vieja
+    const versionAntes = inv.version;
+    inventarios.delete(area.id);
+    const nuevo = de(area);
+    nuevo.version = Math.max(nuevo.version, versionAntes + 1);
+    notificar({ tipo: 'inventario', area: area.id, version: nuevo.version, recargar: true });
+    return { ok: true, eliminados: borrados.length, version: nuevo.version, stock: stockComoLista(nuevo), hoy: totalesDeHoy(nuevo) };
+  }
+
   /* Consumo del período [desde, hasta] (AAAA-MM-DD, hora local; sin límite si falta uno):
      por (material, medida) cuánto salió y cuánto entró, y los totales de cada día.
      "primerDia" es el día del primer movimiento registrado (para saber desde cuándo hay datos). */
@@ -298,7 +350,7 @@ function crear({ datos, notificar }){
     return { desde: d, hasta: h, version: inv.version, primerDia: dias[0] || null, filas, porDia, totales: { sale, entra } };
   }
 
-  return { de, consultar, consumo, registrar, stockPorMaterial: area => stockPorMaterial(de(area)), version: area => de(area).version };
+  return { de, consultar, consumo, registrar, eliminar, stockPorMaterial: area => stockPorMaterial(de(area)), version: area => de(area).version };
 }
 
 module.exports = { crear };

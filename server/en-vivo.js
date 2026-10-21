@@ -24,7 +24,7 @@ const VISTAS_DEL_AVISO = { inventario: ['rack'], rack: ['rack', 'ordenes'], teji
   lista: ['ordenes', 'aprobaciones', 'aprobar'] }; // lista: se renovó la Lista de corte (las pantallas la releen de la memoria del puente, no de SQL)
 
 function crear(usuarios){
-  const clientes = new Map(); // res -> token
+  const clientes = new Map(); // res -> { token, disp }  (disp: 'pc' | 'celular', lo dice cada pantalla)
 
   const puedeVer = (token, evento) => {
     const u = usuarios.deSesion(token, false);
@@ -36,7 +36,7 @@ function crear(usuarios){
 
   function notificar(evento){
     const texto = `data: ${JSON.stringify(evento)}\n\n`; // se arma una sola vez para todas
-    clientes.forEach((token, res)=>{
+    clientes.forEach(({ token }, res)=>{
       const ok = puedeVer(token, evento);
       if(ok === null) return soltar(res); // la sesión ya no vale
       if(!ok) return;
@@ -44,10 +44,27 @@ function crear(usuarios){
     });
   }
 
+  /* Un aviso PARA UNA PERSONA: solo les llega a las pantallas con su sesión (y del tipo
+     pedido, ej. 'pc'). Devuelve a cuántas pantallas se lo mandó. Lo usa el celular para
+     pedirle a la PC del mismo usuario que imprima el sticker. */
+  function notificarUsuario(usuario, evento, disp){
+    const texto = `data: ${JSON.stringify(evento)}
+
+`;
+    let n = 0;
+    clientes.forEach(({ token, disp: d }, res)=>{
+      const u = usuarios.deSesion(token, false);
+      if(!u) return soltar(res);
+      if(u.usuario!==usuario || (disp && d!==disp)) return;
+      try { res.write(texto); n++; } catch(e){ clientes.delete(res); }
+    });
+    return n;
+  }
+
   /* Corta las conexiones cuya sesión ya no vale (después de un logout o de
      cambiar/borrar un usuario). */
   function revisarSesiones(){
-    clientes.forEach((token, res)=>{ if(!usuarios.deSesion(token, false)) soltar(res); });
+    clientes.forEach(({ token }, res)=>{ if(!usuarios.deSesion(token, false)) soltar(res); });
   }
 
   // middleware: va después de exigirLogin (que ya validó el token)
@@ -55,26 +72,26 @@ function crear(usuarios){
     const token = req.query.auth;
     if(clientes.size >= MAX_CONEXIONES) return res.status(503).json({ error: 'demasiadas conexiones en vivo abiertas' });
     // una misma sesión con demasiadas conexiones: se suelta la más vieja
-    const deEsta = [...clientes].filter(([, t])=>t===token).map(([r])=>r);
+    const deEsta = [...clientes].filter(([, c])=>c.token===token).map(([r])=>r);
     if(deEsta.length >= MAX_POR_SESION) soltar(deEsta[0]);
 
     res.set({ 'Content-Type':'text/event-stream', 'Cache-Control':'no-cache', 'Connection':'keep-alive', 'X-Accel-Buffering':'no' });
     res.flushHeaders();
     res.write('retry: 3000\n\n'); // si se corta, el navegador reintenta a los 3 s
-    clientes.set(res, token);
+    clientes.set(res, { token, disp: req.query.disp==='pc' ? 'pc' : 'celular' });
     req.on('close', ()=>clientes.delete(res));
   }
 
   // latido cada 20 s: mantiene viva la conexión (antivirus, proxies),
   // suelta las pestañas que se cerraron sin avisar y las sesiones vencidas
   setInterval(()=>{
-    clientes.forEach((token, res)=>{
+    clientes.forEach(({ token }, res)=>{
       if(!usuarios.deSesion(token, false)) return soltar(res);
       try { res.write(': ping\n\n'); } catch(e){ clientes.delete(res); }
     });
   }, 20000).unref();
 
-  return { notificar, revisarSesiones, manejar, cantidad: ()=>clientes.size };
+  return { notificar, notificarUsuario, revisarSesiones, manejar, cantidad: ()=>clientes.size };
 }
 
 module.exports = { crear };

@@ -19,7 +19,7 @@ let trHuboCorte = false;
 function trUrl(){
   // EventSource no puede mandar cabeceras: la sesión (y la clave del
   // puente, si hay) van en la dirección
-  const q = ['auth='+encodeURIComponent(authToken())];
+  const q = ['auth='+encodeURIComponent(authToken()), 'disp=' + ((typeof tjEsCelular==='function' && tjEsCelular()) ? 'celular' : 'pc')];
   const token = document.getElementById('ordApiToken').value.trim();
   if(token) q.push('api_token='+encodeURIComponent(token));
   return ordBridgeUrl() + '/api/eventos?' + q.join('&');
@@ -65,6 +65,9 @@ function trDespachar(evento){
   } else if(evento.tipo==='tejidos'){
     // entrada, salida o tamaño en el rack de Tejidos (otra PC o un celular)
     if(typeof tjAlCambiar==='function') tjAlCambiar(evento);
+  } else if(evento.tipo==='imprimir'){
+    // un celular del MISMO usuario dio entrada a un tejido: el sticker sale por la Zebra desde esta PC
+    if(typeof tjImprimirPedido==='function') tjImprimirPedido(evento);
   } else if(evento.tipo==='aprobaciones'){
     if(typeof apAlCambiar==='function') apAlCambiar();
   } else if(evento.tipo==='lista'){

@@ -1145,3 +1145,12 @@ body[data-area="tejidos"] .loginBrand::after{
 @media (max-width: 720px){
   .invAyuda{ display:none }   /* la ayuda larga y la leyenda solo en pantallas grandes: en el celular la tabla va primero */
 }
+
+/* eliminar registros de un historial (solo administrador): js/ui/historial-admin.js */
+.haCol{ width:34px; text-align:center; padding-left:8px !important; padding-right:4px !important }
+.haCol input{ width:16px; height:16px; cursor:pointer; accent-color:var(--warn) }
+.haBarra{ display:flex; align-items:center; gap:12px; flex-wrap:wrap; position:sticky; top:0; z-index:2; padding:8px 12px; background:var(--panel); border-bottom:1px solid var(--line-soft); font-size:13px }
+.haBarra[hidden]{ display:none }
+.haCuenta{ font-weight:700 }
+.haEliminar{ background:var(--warn); color:#fff; border:0; border-radius:9px; padding:8px 14px; font-weight:700; cursor:pointer }
+.haEliminar:disabled{ opacity:.6; cursor:wait }

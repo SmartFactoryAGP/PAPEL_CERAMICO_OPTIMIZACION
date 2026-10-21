@@ -117,6 +117,36 @@ prueba('Navegador: Rack de Tecoflex (vistas, consumo, celular y tablet)', async 
   assert.strictEqual(await visible('.invControls'), true); assert.strictEqual(await visible('.invTab[data-tab="registrar"]'), false);
   ok('al agrandar la ventana, el formulario vuelve a la izquierda y sin pestaña Registrar');
 
+  // ---------- el carrito sobrevive a F5 / cerrar y abrir ----------
+  await C.ev(`invCarrito.push({ tipo: 'salida', material: '${PU}', materialNombre: 'PU', medida: '20', cantidad: 2 }, { tipo: 'salida', material: '${LISO}', materialNombre: 'Liso', medida: '9', cantidad: 3 }); invGuardarCarrito(); invDibujarCarrito(); 1`);
+  await C.ev(`{ const n = document.getElementById('invNota'); n.value = 'entrega a la línea 3'; n.dispatchEvent(new Event('input')); } 1`);
+  await C.ir(p.url); await sleep(1500);
+  if(!(await C.ev(`document.getElementById('tabRack')&&!!document.getElementById('invCartCount')&&authEstaLogueado()`))) await C.entrar('Hfrodriguez', 'admin123', 'tecoflex');
+  await C.ev(`document.getElementById('tabRack').click(); 1`); await sleep(1500);
+  assert.strictEqual(await C.ev(`invCarrito.length`), 2, 'el carrito se perdió al recargar');
+  assert.strictEqual(await C.ev(`document.getElementById('invCartCount').textContent`), '2');
+  assert.strictEqual(await C.ev(`document.getElementById('invNota').value`), 'entrega a la línea 3');
+  await C.ev(`invCarrito.length = 0; invGuardarCarrito(); invDibujarCarrito(); 1`);
+  await C.ir(p.url); await sleep(1500);
+  if(!(await C.ev(`authEstaLogueado()`))) await C.entrar('Hfrodriguez', 'admin123', 'tecoflex');
+  await C.ev(`document.getElementById('tabRack').click(); 1`); await sleep(1200);
+  assert.strictEqual(await C.ev(`invCarrito.length + '|' + document.getElementById('invNota').value`), '0|', 'un carrito vacío no deja nota');
+  ok('el carrito (líneas y nota) sigue ahí después de recargar la página; vacío no deja nada');
+
+  // ---------- el administrador elimina movimientos desde la tabla ----------
+  await C.send('Emulation.setDeviceMetricsOverride', { width: 1600, height: 1000, deviceScaleFactor: 1, mobile: false }); await sleep(400);
+  await ver('movimientos');
+  assert.strictEqual(await C.ev(`document.querySelectorAll('#invMovs .haSel').length`), 4, 'el admin ve una casilla por movimiento');
+  assert.strictEqual(await C.ev(`document.querySelector('#invMovs .haBarra').hidden`), true, 'sin selección no hay barra');
+  await ver('consumo'); const antesCeldas = (await celdas()).join('|'); await ver('movimientos');
+  await C.ev(`document.querySelector('#invMovs .haSel').click(); 1`); await sleep(200);
+  assert.ok(/1 seleccionado/.test(await C.ev(`document.querySelector('#invMovs .haCuenta').textContent`)));
+  await C.ev(`window.confirm = ()=>true; document.querySelector('#invMovs .haEliminar').click(); 1`); await sleep(1500);
+  assert.strictEqual(await C.ev(`document.querySelectorAll('#invMovs tbody tr').length`), 3, 'el movimiento borrado salió de la tabla');
+  await ver('consumo');
+  assert.notStrictEqual((await celdas()).join('|'), antesCeldas, 'el consumo tiene que cambiar al borrar la salida más reciente');
+  ok('el administrador elige un movimiento con su casilla, lo elimina y desaparece de la tabla y del consumo');
+
   assert.deepStrictEqual(C.errores, [], 'errores de JavaScript: ' + C.errores.join(' | '));
   ok('sin errores de JavaScript');
 });

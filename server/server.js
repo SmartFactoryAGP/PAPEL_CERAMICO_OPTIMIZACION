@@ -474,6 +474,14 @@ function enTandas(lista, tam){
   for(let i=0; i<lista.length; i+=tam) tandas.push(lista.slice(i, i+tam));
   return tandas;
 }
+/* Corre fn(item) sobre cada item con hasta `limite` a la vez; si una falla, falla todo. */
+async function enParalelo(items, limite, fn){
+  let i = 0;
+  const obreros = Array.from({ length: Math.min(limite, items.length) }, async ()=>{
+    while(i < items.length){ const item = items[i++]; await fn(item); }
+  });
+  await Promise.all(obreros);
+}
 /* Arma "@prefijo0,@prefijo1,..." registrando cada valor como parámetro
    VarChar del request — el patrón de siempre para los IN dinámicos. */
 function placeholdersIn(request, prefijo, valores){
@@ -506,7 +514,9 @@ async function traerCalendario(ordenes, estricto){
     const pool = await getPoolCalendario();
     const c = columnasCalendario();
     const mapa = {};
-    for(const tanda of enTandas(ordenes, MAX_PARAMS_POR_CONSULTA)){
+    // las tandas no dependen una de otra: salen juntas (hasta 4 a la vez), no una tras otra
+    const unicas = [...new Set(ordenes.map(String))];
+    await enParalelo(enTandas(unicas, MAX_PARAMS_POR_CONSULTA), 4, async tanda=>{
       const request = pool.request();
       const placeholders = placeholdersIn(request, 'cal', tanda);
       const result = await request.query(
@@ -517,7 +527,7 @@ async function traerCalendario(ordenes, estricto){
         mapa[String(r.orden)] = { puesto: r.puesto, zfer: r.zfer==null ? '' : String(r.zfer).trim(), planCurve: r.planCurve, nivel: r.nivel,
                                   vehiculo: r.vehiculo==null ? '' : String(r.vehiculo).trim() };
       });
-    }
+    });
     return mapa;
   } catch(err){
     console.error('[calendario]', err.message);
@@ -617,7 +627,12 @@ function fotoLista(area){
     f = instantanea.crear({
       periodoMs: LISTA_PERIODO_MS,
       minEntreForzadosMs: parseFloat(process.env.LISTA_FORZAR_CADA_S || '30') * 1000,
-      cargar: area.id==='papel' ? cargarPapelCrudo : area.listaPorCodmat ? ()=>cargarMallasCrudo(area) : ()=>pendientesDeArea(area),
+      cargar: async()=>{
+        const t0 = Date.now();
+        const datos = await (area.id==='papel' ? cargarPapelCrudo() : area.listaPorCodmat ? cargarMallasCrudo(area) : pendientesDeArea(area));
+        console.log(`[lista] ${area.nombre}: consultada en ${((Date.now()-t0)/1000).toFixed(1)} s`);
+        return datos;
+      },
       alActualizar: ()=>notificar({ tipo:'lista', area: area.id }),
     });
     fotosLista.set(area.id, f);
@@ -771,7 +786,7 @@ async function nombresDeComponentes(codmats){
   try {
     const pool = await getPoolFullkit();
     const mapa = {};
-    for(const tanda of enTandas(unicos, 400)){ // 2 parámetros por código: muy por debajo del tope de 2100
+    await enParalelo(enTandas(unicos, 400), 4, async tanda=>{ // 2 parámetros por código: muy por debajo del tope de 2100
       const request = pool.request();
       const conCeros = placeholdersIn(request, 'fk', tanda), sinCerosPh = placeholdersIn(request, 'fs', tanda.map(sinCeros));
       const result = await request.query(
@@ -779,7 +794,7 @@ async function nombresDeComponentes(codmats){
          WHERE ${cfg.columnaCodigo} IN (${conCeros}) OR ${cfg.columnaCodigo} IN (${sinCerosPh})
          GROUP BY ${cfg.columnaCodigo}`);
       result.recordset.forEach(r=>{ const n = String(r.nombre==null ? '' : r.nombre).trim(); if(n) mapa[sinCeros(r.codigo)] = n; });
-    }
+    });
     return mapa;
   } catch(err){
     console.error('[nombres-componentes] no se pudo consultar ODATA_Fullkit, se dejan los nombres de SAGA:', err.message);
@@ -1045,6 +1060,11 @@ app.get('/api/inventario/consumo', exigirPermiso('rack'), (req, res) => {
 /* Rack: entradas y salidas. En Mallas, quien trabaja en Lista de corte
    (permiso "ordenes") también puede dar ENTRADA a lo que fabricó — pero
    solo quien tiene "rack" puede dar salida. */
+/* Solo el administrador: borrar movimientos del historial (ej. las pruebas, antes de salir a producción). */
+app.post('/api/inventario/movimientos/eliminar', exigirPermiso('rack'), exigirAdmin, (req, res) => {
+  try { res.json(inventario.eliminar(areaDe(req), (req.body || {}).ids, req.usuario)); }
+  catch (err) { responderError(res, 'inventario/eliminar', err); }
+});
 app.post('/api/inventario/movimientos', exigirPermiso('rack','ordenes'), (req, res) => {
   try {
     const area = areaDe(req);
@@ -1091,9 +1111,20 @@ app.get('/api/tejidos/fotos/:archivo', exigirPermiso('rack','ordenes'), conRackP
   res.setHeader('Cache-Control', 'private, max-age=86400'); // la foto de una entrada no cambia nunca
   res.sendFile(r);
 }));
-app.post('/api/tejidos/entrada', exigirPermiso('rack'), conRackPosiciones((req, res, rp)=>res.json({ ok: true, ...rp.entrada(req.body, req.usuario) })));
+/* Entrada desde el CELULAR (celular:true): el celular no imprime; el sticker lo imprime la PC donde
+   está abierta la app con el MISMO usuario. impresoEnPc = a cuántas PCs de esa persona se les pidió. */
+app.post('/api/tejidos/entrada', exigirPermiso('rack'), conRackPosiciones((req, res, rp)=>{
+  const r = rp.entrada(req.body, req.usuario);
+  const out = { ok: true, ...r };
+  const celular = !!(req.body && req.body.celular === true) && !r.repetido;
+  // con Zebra propia (ZEBRA_PRINTER_POR_USUARIO) el celular imprime solo, por el puente, en SU impresora
+  if(celular && impresoraPorUsuario.has(String(req.usuario).toLowerCase())) out.imprimirAqui = true;
+  else if(celular) out.impresoEnPc = enVivo.notificarUsuario(req.usuario, { tipo: 'imprimir', area: areaDe(req).id, unidad: r.unidad, posicion: r.posicion }, 'pc');
+  res.json(out);
+}));
 app.post('/api/tejidos/salida', exigirPermiso('rack'), conRackPosiciones((req, res, rp)=>res.json({ ok: true, ...rp.salida(req.body || {}, req.usuario) })));
 app.put('/api/tejidos/tamano', exigirPermiso('rack','ordenes'), conRackPosiciones((req, res, rp)=>res.json({ ok: true, ...rp.fijarTamano(req.body || {}, req.usuario) })));
+app.post('/api/tejidos/historial/eliminar', exigirPermiso('rack'), exigirAdmin, conRackPosiciones((req, res, rp)=>res.json(rp.eliminarHistorial((req.body || {}).ids, req.usuario))));
 app.get('/api/tejidos/historial', exigirPermiso('rack','ordenes'), conRackPosiciones((req, res, rp)=>{
   const q = req.query || {};
   const evento = ['entrada','salida','tamano','movimientos'].includes(q.evento) ? q.evento : null;
@@ -1125,44 +1156,72 @@ app.get('/api/eventos', exigirLogin, enVivo.manejar);
    Si no completaste ZEBRA_PRINTER_SHARE en tu .env, este endpoint
    avisa claro en vez de fallar raro — la app entonces sigue ofreciendo
    el PDF de stickers como respaldo. */
+/* Cada persona puede tener SU Zebra (la de la PC donde trabaja): ZEBRA_PRINTER_POR_USUARIO en el
+   .env, "usuario=destino;usuario=destino". El destino es el nombre de una impresora compartida
+   de ESTA PC ("ZEBRA") o de otra PC de la red ("\\PC-ZUND\ZEBRA"). Quien no está en la lista usa
+   ZEBRA_PRINTER_SHARE. Así ZUND1, aunque entre desde el celular, imprime en la Zebra de su puesto. */
+const RE_COMPARTIDA_LOCAL = /^[\w.$ -]{1,80}$/;
+const RE_COMPARTIDA_RED = /^\\\\[\w.-]{1,63}\\[\w.$ -]{1,80}$/;
+const impresoraPorUsuario = new Map();
+String(process.env.ZEBRA_PRINTER_POR_USUARIO || '').split(';').forEach(par=>{
+  const i = par.indexOf('='); if(i < 1) return;
+  const usuario = par.slice(0, i).trim().toLowerCase(), destino = par.slice(i + 1).trim();
+  if(!usuario || !destino) return;
+  if(RE_COMPARTIDA_LOCAL.test(destino) || RE_COMPARTIDA_RED.test(destino)) impresoraPorUsuario.set(usuario, destino);
+  else console.error(`[imprimir-zpl] ZEBRA_PRINTER_POR_USUARIO: destino no válido para "${usuario}" (se ignora).`);
+});
+/* "\\PC\Recurso" de la impresora a la que le toca imprimir a esta persona, o null */
+function impresoraDe(usuario){
+  const d = impresoraPorUsuario.get(String(usuario || '').toLowerCase()) || process.env.ZEBRA_PRINTER_SHARE;
+  if(!d) return null;
+  if(RE_COMPARTIDA_RED.test(d)) return d;
+  return RE_COMPARTIDA_LOCAL.test(d) ? '\\\\localhost\\' + d : false; // false: configurada pero con caracteres no válidos
+}
 app.post('/api/imprimir-zpl', exigirPermiso('ordenes','rack'), (req, res) => {
-  const printerShare = process.env.ZEBRA_PRINTER_SHARE;
-  if(!printerShare){
-    return res.status(501).json({ error: 'ZEBRA_PRINTER_SHARE no está configurado en tu .env — todavía no se puede imprimir directo (ver CONECTAR_SQL.md).' });
+  const destino = impresoraDe(req.usuario);
+  if(destino === null){
+    return res.status(501).json({ error: 'No hay impresora configurada para este usuario (ZEBRA_PRINTER_SHARE o ZEBRA_PRINTER_POR_USUARIO en el .env, ver CONECTAR_SQL.md).' });
   }
-  // el nombre va dentro de un comando de Windows: solo caracteres de un
-  // nombre de recurso compartido (nada de comillas, & o |, que permitirían
-  // colar otro comando si el .env tuviera algo raro)
-  if(!/^[\w.$ -]{1,80}$/.test(printerShare)){
-    return res.status(500).json({ error: 'ZEBRA_PRINTER_SHARE tiene caracteres no válidos en el .env (solo letras, números, espacio, punto, guion y $).' });
+  // el destino va dentro de un comando de Windows: solo caracteres de un nombre de recurso
+  // compartido (nada de comillas, & o |, que permitirían colar otro comando)
+  if(destino === false){
+    return res.status(500).json({ error: 'La impresora configurada en el .env tiene caracteres no válidos (solo letras, números, espacio, punto, guion y $).' });
   }
   const { zpl } = req.body || {};
   if(typeof zpl !== 'string' || !zpl) return res.status(400).json({ error: 'falta el contenido ZPL a imprimir' });
 
-  const tmpFile = path.join(os.tmpdir(), `sticker_${Date.now()}_${crypto.randomBytes(4).toString('hex')}.zpl`);
-  try {
-    fs.writeFileSync(tmpFile, zpl, 'utf8');
-  } catch(err){
-    return responderError(res, 'imprimir-zpl', err);
-  }
-  // "copy /b" manda el archivo TAL CUAL (binario/crudo), sin que Windows
-  // intente convertirlo — es el mismo truco que se usa hace años para
-  // mandar ZPL/PCL/PostScript crudo a una impresora desde la línea de
-  // comandos. \\localhost\NombreCompartido apunta a la impresora
-  // instalada en ESTA MISMA PC, usando su nombre de recurso compartido.
-  const comando = `copy /b "${tmpFile}" "\\\\localhost\\${printerShare}"`;
-  // con tope de tiempo: si la impresora no contesta, el pedido no queda
-  // colgado para siempre (la app cae sola al PDF de respaldo)
-  exec(comando, { timeout: 30000, windowsHide: true }, (err, stdout, stderr) => {
-    fs.unlink(tmpFile, ()=>{}); // limpieza del temporal; si falla no importa, no bloquea la respuesta
-    if(err){
-      console.error('[imprimir-zpl]', stderr);
-      err.message = 'no se pudo mandar a imprimir: ' + err.message;
-      return responderError(res, 'imprimir-zpl', err);
-    }
-    res.json({ ok: true });
-  });
+  // Los trabajos de CADA impresora salen de a UNO (cola) y con una pausa corta entre ellos: varias
+  // entradas seguidas lanzaban varios "copy" a la vez sobre el mismo USB, y la Zebra imprimía las
+  // primeras y después se trababa. Si un envío falla, se reintenta una vez.
+  encolarImpresion(destino, ()=>enviarAZebra(zpl, destino))
+    .then(()=>res.json({ ok: true }))
+    .catch(err=>{ err.message = 'no se pudo mandar a imprimir: ' + err.message; responderError(res, 'imprimir-zpl', err); });
 });
+
+const IMPRESION_PAUSA_MS = parseInt(process.env.ZEBRA_PAUSA_MS || '800', 10);
+const colasImpresion = new Map(); // destino -> promesa de la cola
+function encolarImpresion(destino, trabajo){
+  const resultado = (colasImpresion.get(destino) || Promise.resolve()).then(trabajo);
+  // la cola sigue aunque este trabajo falle; la pausa evita pisar el anterior
+  colasImpresion.set(destino, resultado.catch(()=>{}).then(()=>new Promise(r=>setTimeout(r, IMPRESION_PAUSA_MS))));
+  return resultado;
+}
+function enviarAZebra(zpl, destino, intento = 1){
+  return new Promise((resolve, reject)=>{
+    const tmpFile = path.join(os.tmpdir(), `sticker_${Date.now()}_${crypto.randomBytes(4).toString('hex')}.zpl`);
+    try { fs.writeFileSync(tmpFile, zpl, 'utf8'); } catch(err){ return reject(err); }
+    // "copy /b" manda el archivo TAL CUAL (crudo) a la impresora compartida
+    const comando = `copy /b "${tmpFile}" "${destino}"`;
+    // con tope de tiempo: si la impresora no contesta, el pedido no queda colgado para siempre
+    exec(comando, { timeout: 30000, windowsHide: true }, (err, stdout, stderr)=>{
+      fs.unlink(tmpFile, ()=>{});
+      if(!err) return resolve();
+      console.error(`[imprimir-zpl] intento ${intento} → ${destino}:`, stderr || err.message);
+      if(intento < 2) return setTimeout(()=>enviarAZebra(zpl, destino, intento + 1).then(resolve, reject), 1500);
+      reject(err);
+    });
+  });
+}
 
 /* ============ 2) Contenido del DXF de una orden ============
    Dos formas de traerlo, según DXF_SOURCE en tu .env:
@@ -1425,6 +1484,26 @@ if((process.env.DXF_SOURCE || 'sql').toLowerCase()==='file' && !DXF_PREFIJOS.len
   console.warn('  cualquier carpeta de red. Completalo con las carpetas donde viven los DXF (ver .env.example).');
 }
 datos.iniciarRespaldos();
+
+/* Las listas de corte se consultan a SQL al ARRANCAR (una área tras otra, para no
+   cargar a SAGA con todo junto) y se renuevan solas cada período, por detrás.
+   Antes la primera persona que abría la pestaña esperaba la consulta entera
+   (minutos), y lo mismo cada hora, cuando la lista vencía. LISTA_PRECALENTAR=false
+   lo apaga (vuelve a consultar solo cuando alguien la pide). */
+async function precalentarListas(){
+  for(const area of Object.values(AREAS_CONFIG.areas)){
+    if(area.listaCorte===false || !area.vistas.includes('ordenes')) continue;
+    try { await fotoLista(area).refrescar(); }
+    catch(e){ console.error(`[lista] ${area.nombre}: no se pudo precalentar (${e.message}); se reintenta al pedirla.`); }
+  }
+}
+if(String(process.env.LISTA_PRECALENTAR || 'true').toLowerCase() !== 'false'){
+  setTimeout(precalentarListas, 1500).unref();
+  // el reloj mira seguido (no cada hora justa) y renueva solo la que ya venció
+  setInterval(()=>{
+    Object.values(AREAS_CONFIG.areas).forEach(a=>{ if(a.listaCorte!==false && a.vistas.includes('ordenes')) fotoLista(a).renovarSiVence(); });
+  }, Math.min(60000, Math.max(500, LISTA_PERIODO_MS / 4))).unref();
+}
 app.listen(PORT, () => {
   console.log(`Puente "Lista de corte" escuchando en http://localhost:${PORT}`);
   const ips = direccionesDeRed();

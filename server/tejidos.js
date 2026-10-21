@@ -85,15 +85,16 @@ function crear({ datos, notificar, area }){
   const dosDig = n => String(n).padStart(2, '0');
   const diaLocal = f => { const x = new Date(f); return isNaN(x) ? '' : `${x.getFullYear()}-${dosDig(x.getMonth()+1)}-${dosDig(x.getDate())}`; };
   /* la fila que muestra el historial (sin los campos internos de la unidad) */
-  function compactar(ev){
+  const idDeLinea = linea => crypto.createHash('sha1').update(linea).digest('hex').slice(0, 12); // identifica el evento (para borrarlo)
+  function compactar(ev, id){
     const u = ev.unidad || {};
-    return { evento: ev.evento, fecha: ev.fecha, usuario: ev.usuario || '', pos: ev.pos || '',
+    return { id, evento: ev.evento, fecha: ev.fecha, usuario: ev.usuario || '', pos: ev.pos || '',
       codmat: u.codmat || ev.codmat || '', nombre: u.nombre || '', vehiculo: u.vehiculo || '',
       tamano: ev.evento==='tamano' ? ev.tamano : (u.tamano || ''), antes: ev.antes || null,
       responsables: u.responsables || '', resistencia1: u.resistencia1 || '', resistencia2: u.resistencia2 || '', ensamble: u.ensamble || '',
       foto: u.foto || null, motivo: ev.motivo || null, fechaEntrada: ev.evento==='salida' ? (u.fecha || null) : null };
   }
-  function anotar(ev){ eventos.push(compactar(ev)); dias.push(diaLocal(ev.fecha)); recordarId(ev); }
+  function anotar(ev, id){ eventos.push(compactar(ev, id)); dias.push(diaLocal(ev.fecha)); recordarId(ev); }
 
   function cargar(){
     posiciones = (leerJson('posiciones.json', []) || [])
@@ -105,7 +106,7 @@ function crear({ datos, notificar, area }){
     if(fs.existsSync(h)){
       fs.readFileSync(h, 'utf8').split('\n').forEach(t=>{
         if(!t.trim()) return;
-        try { const ev = JSON.parse(t); version++; anotar(ev); } catch(e){ /* línea cortada por un apagón */ }
+        try { const ev = JSON.parse(t); version++; anotar(ev, idDeLinea(t)); } catch(e){ /* línea cortada por un apagón */ }
       });
     }
     const n = Object.keys(ocupacion).length;
@@ -113,9 +114,10 @@ function crear({ datos, notificar, area }){
   }
 
   function registrar(ev){
-    fs.appendFileSync(ruta('historial.jsonl'), JSON.stringify(ev) + '\n', 'utf8');
+    const linea = JSON.stringify(ev);
+    fs.appendFileSync(ruta('historial.jsonl'), linea + '\n', 'utf8');
     version++;
-    anotar(ev);
+    anotar(ev, idDeLinea(linea));
     notificar({ tipo: 'tejidos', area: area.id, version });
     notificar({ tipo: 'lista', area: area.id }); // el stock cambia lo que "Falta" en Lista de corte
   }
@@ -264,9 +266,35 @@ function crear({ datos, notificar, area }){
     return { total, eventos: lista, version };
   }
 
+  /* ADMINISTRADOR: borra eventos del historial (por id). Es solo el registro: lo que hay HOY en las
+     posiciones no cambia. Lo borrado queda en historial-eliminado.jsonl (quién, cuándo y el evento). */
+  function eliminarHistorial(ids, usuario){
+    const quitar = new Set((Array.isArray(ids) ? ids : []).map(x=>String(x)).slice(0, 5000));
+    if(!quitar.size) throw errorHttp('No elegiste ningún movimiento.');
+    const h = ruta('historial.jsonl');
+    const quedan = [], borradas = [], hallados = new Set();
+    (fs.existsSync(h) ? fs.readFileSync(h, 'utf8') : '').split('\n').forEach(t=>{
+      if(!t.trim()) return;
+      const id = idDeLinea(t);
+      if(quitar.has(id)){ borradas.push(t); hallados.add(id); } else quedan.push(t);
+    });
+    if(hallados.size !== quitar.size) throw errorHttp('Alguno de esos movimientos ya no existe (¿lo borró otra PC?). Actualizá la pantalla.', 404);
+    const crudo = t => { try { return JSON.parse(t); } catch(e){ return t; } };
+    fs.appendFileSync(ruta('historial-eliminado.jsonl'),
+      borradas.map(t=>JSON.stringify({ eliminadoPor: usuario, eliminadoEn: new Date().toISOString(), evento: crudo(t) })).join('\n') + '\n', 'utf8');
+    const tmp = h + '.tmp';
+    fs.writeFileSync(tmp, quedan.join('\n') + (quedan.length ? '\n' : ''), 'utf8'); fs.renameSync(tmp, h);
+    // se rehace lo que está en memoria
+    eventos.length = 0; dias.length = 0; textos.length = 0; porIdCliente.clear();
+    quedan.forEach(t=>{ try { anotar(JSON.parse(t), idDeLinea(t)); } catch(e){ /* línea cortada */ } });
+    version++;
+    notificar({ tipo: 'tejidos', area: area.id, version });
+    return { ok: true, eliminados: borradas.length, version };
+  }
+
   cargar();
   const resumenDia = () => { const h = totalesDeHoy(); return { entra: h.entra, sale: h.sale, ocupadas: ocupadas() }; };
-  return { estado, firma, resumenDia, stockPorMaterial, tamanoDe, fijarTamano, guardarFoto, rutaFoto, entrada, salida, historial, version: ()=>version };
+  return { estado, firma, resumenDia, stockPorMaterial, tamanoDe, fijarTamano, guardarFoto, rutaFoto, entrada, salida, historial, eliminarHistorial, version: ()=>version };
 }
 
 module.exports = { crear, compararPos };

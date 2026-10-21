@@ -24,7 +24,7 @@ prueba('Navegador: Rack de Tejidos en el celular', async limpiar=>{
   const datosSql = path.join(dir, 'sql-falso.json');
   fs.writeFileSync(datosSql, JSON.stringify({ saga: [], calendario: ['61','62','63'].map(orden=>({ orden, puesto: '11ZUND', vehiculo: 'BMW X5 4D UTILITY' })),
     mallas: [m('61', '000000000600039736', 'PUTE0062.1244.14.00.F'), m('62', '000000000600039736', 'PUTE0062.1244.14.00.F'), m('63', '000000000600051455', 'PUTE0076.1662.005.001.B')] }));
-  const p = await arrancarPuente(dir, 5115, { DB_SERVER: 'falso', CAL_DB_SERVER: 'falso', FAKE_SQL_DATOS: datosSql });
+  const p = await arrancarPuente(dir, 5115, { DB_SERVER: 'falso', CAL_DB_SERVER: 'falso', FAKE_SQL_DATOS: datosSql, ZEBRA_PRINTER_POR_USUARIO: 'Beto=ZEBRA_DE_BETO' });
   limpiar(()=>p.cerrar());
   const adm = await login(p.url, 'Hfrodriguez', 'admin123');
   await api(p.url, 'POST', '/api/usuarios', { token: adm, cuerpo: { usuario: 'Operario Zund', clave: 'zund01', permisos: { tejidos: ['rack', 'ordenes'] } } });
@@ -73,16 +73,26 @@ prueba('Navegador: Rack de Tejidos en el celular', async limpiar=>{
   await C.send('DOM.setFileInputFiles', { nodeId: nodo.result.nodeId, files: [foto] }); await sleep(600);
   assert.strictEqual(await C.ev(`!document.getElementById('tjFotoPrev').hidden`), true);
   await C.captura(path.join(CAPTURAS, 'tejidos-celular-entrada.png'));
+  // la PC del MISMO usuario, abierta en el Rack con su Zebra falsa: es quien imprime lo que se da de alta en el celular
+  const PC = await chrome.pagina();
+  await PC.ir(p.url); await PC.entrar('Operario Zund', 'zund01', 'tejidos');
+  await PC.ev(`document.getElementById('tabRack').click(); window.__impresos = []; window.tjImprimir = async (u, pos)=>{ window.__impresos.push({ pos, foto: u.foto, nombre: u.nombre }); return 'Sticker enviado a la Zebra.'; }; 1`); await sleep(800);
   await C.ev(`window.__pdf = null; { const J0 = window.jspdf.jsPDF; window.jspdf.jsPDF = function(...a){ const d = new J0(...a); d.save = n=>{ window.__pdf = n; }; return d; }; } 1`);
   await C.ev(`document.getElementById('tjEntrar').click(); 1`); await sleep(1500);
   const res = await C.ev(`document.getElementById('tjResultado').innerText.replace(/\\s+/g,' ').trim()`);
   assert.ok(/va en la posición A1\.1/i.test(res), res);
   assert.strictEqual(await C.ev(`window.__pdf`), null, 'desde el celular no se imprime ni se baja el PDF');
-  assert.ok(/Reimprimir sticker/.test(res), res);
+  assert.ok(/se está imprimiendo en la PC/.test(res), 'el celular tiene que avisar que la PC de su usuario imprime: ' + res);
+  await sleep(700);
+  const impresos = await PC.ev(`window.__impresos`);
+  assert.strictEqual(impresos.length, 1, 'la PC del mismo usuario imprime una vez: ' + JSON.stringify(impresos));
+  assert.strictEqual(impresos[0].pos, 'A1.1');
+  assert.ok(/Entrada hecha desde el celular \(A1\.1\)/.test(await PC.ev(`document.getElementById('tjMsg').textContent`)));
+  const fotoSubida = impresos[0].foto;
   assert.strictEqual(await C.ev(`document.getElementById('tjResponsables').value`), 'Juan Pérez', 'el responsable se conserva para el siguiente');
   assert.strictEqual(await C.ev(`document.getElementById('tjTejido').value`), '');
   await C.captura(path.join(CAPTURAS, 'tejidos-celular-resultado.png'));
-  ok(`celular: elegir tejido → "Va a la posición A1.1"; sin foto no deja; con la foto de la cámara entra: "${res}"; desde el celular NO imprime ni baja PDF`);
+  ok(`celular: elegir tejido → "Va a la posición A1.1"; sin foto no deja; con la foto de la cámara entra: "${res}"; desde el celular NO imprime ni baja PDF: lo imprime la PC del mismo usuario (una vez), y solo esa`);
 
   // "Por material" (la pestaña de entrada): cuánto hay de cada uno y, al tocarlo, en qué posiciones
   assert.strictEqual(await C.ev(`document.querySelector('.tjTab.active').dataset.tab`), 'material');
@@ -183,6 +193,18 @@ prueba('Navegador: Rack de Tejidos en el celular', async limpiar=>{
   await C.ev(`document.getElementById('tjDetCerrar').click(); 1`);
   ok('PC: "Reimprimir sticker" saca el sticker de una entrada hecha desde el celular');
 
+  // otra persona (sin PC abierta) da entrada desde el celular: nadie imprime y el celular lo dice; ni la PC de OTRO usuario recibe nada
+  const sinPc = await api(p.url, 'POST', '/api/tejidos/entrada', { token: adm, area: 'tejidos', cuerpo: { codmat: '600039736', responsables: 'Ana', resistencia1: '1', foto: fotoSubida, celular: true } });
+  assert.strictEqual(sinPc.s, 200, JSON.stringify(sinPc.d)); assert.strictEqual(sinPc.d.impresoEnPc, 0);
+  await sleep(500); assert.strictEqual((await PC.ev(`window.__impresos`)).length, 1, 'la PC de otro usuario no debe imprimir lo de Hfrodriguez');
+  // lo hecho desde la PC misma (sin la marca de celular) no pide imprimir a nadie más
+  const dePc = await api(p.url, 'POST', '/api/tejidos/entrada', { token: adm, area: 'tejidos', cuerpo: { codmat: '600039736', responsables: 'Ana', resistencia1: '1', foto: fotoSubida } });
+  assert.strictEqual(dePc.d.impresoEnPc, undefined);
+  // con Zebra propia (Beto=ZEBRA_DE_BETO en el .env) el celular imprime solo, por el puente: nadie más es avisado
+  const beto = await login(p.url, 'Beto', 'beto123');
+  const propia = await api(p.url, 'POST', '/api/tejidos/entrada', { token: beto, area: 'tejidos', cuerpo: { codmat: '600039736', responsables: 'Beto', resistencia1: '1', foto: fotoSubida, celular: true } });
+  assert.strictEqual(propia.s, 200, JSON.stringify(propia.d)); assert.strictEqual(propia.d.imprimirAqui, true); assert.strictEqual(propia.d.impresoEnPc, undefined);
+  ok('otro usuario sin PC abierta: nadie imprime y el celular lo sabe; la PC de otro usuario no recibe nada; lo hecho desde la PC no pide imprimir a nadie');
   assert.deepStrictEqual(C.errores, [], 'errores de JavaScript: ' + C.errores.join(' | '));
   ok('sin errores de JavaScript');
 });

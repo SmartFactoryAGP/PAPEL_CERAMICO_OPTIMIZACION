@@ -39,9 +39,21 @@ prueba('Navegador: Lista de corte de papel y Aprobaciones de ZFER', async limpia
   // sin tocar ningún botón: la lista se trae sola al abrir la pestaña
   await A.ev(`document.getElementById('tabOrdenes').click(); 1`); await sleep(700);
   assert.strictEqual(await A.ev(`document.getElementById('ordRefreshBtn').offsetParent===null`), true, 'el operario no tiene que ver el botón de actualizar');
-  const hora = await A.ev(`document.getElementById('ordBridgeStatus').textContent`);
+  await sleep(1500); const hora = await A.ev(`document.getElementById('ordBridgeStatus').textContent`);
   assert.ok(/^Lista de las .+ · se actualiza sola a las /.test(hora), hora);
   ok(`la lista se carga sola al abrir; el operario no tiene botón de actualizar y ve: "${hora.trim()}"`);
+  // papel: lo que está en los puestos 01 a 04 pasa solo al Lote actual al abrir la lista
+  assert.strictEqual(await A.ev(`[...ordEnLoteIds].sort().join(',')`), '1001,1004', 'las órdenes de 01CORTE y 02CNC tienen que estar ya en el lote');
+  assert.strictEqual(await A.ev(`['01CORTE','02CNC','03SERIG','04SER_VT','04ser_vt',' 02CNC'].every(p=>ordEsPuesto0a4({ Puestodetrabajo: p })) && ['PLANEACION','','05EMPAL',null].every(p=>!ordEsPuesto0a4({ Puestodetrabajo: p }))`), true);
+  assert.ok(/ya están en el lote/.test(await A.ev(`document.getElementById('ordBridgeStatus').textContent`)));
+  // las saco: vuelven a la lista y NO se re-agregan solas (una sola vez); el botón las vuelve a traer
+  await A.ev(`ordQuitarDelLote('1001'); ordQuitarDelLote('1004'); 1`); await sleep(200);
+  await A.ev(`ordRefrescar({ auto: true }); 1`); await sleep(500);
+  assert.strictEqual(await A.ev(`ordEnLoteIds.size`), 0, 'lo que el usuario sacó del lote no vuelve solo');
+  await A.ev(`document.getElementById('ordAddPuestosBtn').click(); 1`); await sleep(200);
+  assert.strictEqual(await A.ev(`[...ordEnLoteIds].sort().join(',')`), '1001,1004');
+  await A.ev(`ordQuitarDelLote('1001'); ordQuitarDelLote('1004'); 1`); await sleep(200);
+  ok('Lote actual: las órdenes de los puestos 01 a 04 entran solas al abrir la lista (una vez) y el botón "+ Puestos 01 a 04" las vuelve a traer');
   const encabezados = await A.ev(`[...document.querySelectorAll('#ordTableWrap thead th')].map(t=>t.textContent.trim()).join('|')`);
   assert.ok(/^Ordem_Serial\|Vehículo\|/.test(encabezados) && /ZFER\|PlanCURVE\|NivelAGP/.test(encabezados) && !/CodMat/.test(encabezados), encabezados);
   const filasA = await A.ev(`[...document.querySelectorAll('#ordTableWrap tbody tr')].map(tr=>tr.cells[0].textContent.trim()).sort().join(',')`);

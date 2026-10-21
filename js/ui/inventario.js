@@ -45,16 +45,22 @@ function invCargarCarrito(){
   const clave = invClaveCarrito();
   if(clave===invCarritoDe) return;
   invCarritoDe = clave;
-  invCarrito = []; invLoteId = null;
+  invCarrito = []; invLoteId = null; document.getElementById('invNota').value = '';
   try {
     const v = JSON.parse(localStorage.getItem(clave)||'null');
-    if(v && Array.isArray(v.items)){ invCarrito = v.items; invLoteId = v.loteId || null; }
+    if(v && Array.isArray(v.items)){ invCarrito = v.items; invLoteId = v.loteId || null; if(v.nota) document.getElementById('invNota').value = v.nota; }
   } catch(e){}
 }
 function invGuardarCarrito(){
   invLoteId = invCarrito.length ? invNuevoLoteId() : null; // carrito distinto = lote distinto
-  try { localStorage.setItem(invCarritoDe, JSON.stringify({items: invCarrito, loteId: invLoteId})); } catch(e){}
+  invEscribirCarrito();
 }
+/* la nota también se guarda (sin tocar el lote: escribir una nota no cambia lo que se registra) */
+function invEscribirCarrito(){
+  const nota = document.getElementById('invNota').value;
+  try { localStorage.setItem(invCarritoDe, JSON.stringify({items: invCarrito, loteId: invLoteId, nota: invCarrito.length ? nota : ''})); } catch(e){}
+}
+document.getElementById('invNota').addEventListener('input', ()=>{ if(invCarritoDe) invEscribirCarrito(); });
 
 const invClave = (m, d) => m+'|'+d;
 const invNum = d => parseFloat(String(d).replace(',', '.'));
@@ -101,6 +107,7 @@ async function invRender(silencioso){
    cambio por los dos lados y en cualquier orden: la versión lo ordena. */
 function invAplicarResultado(r){
   if(areaActual().rack.tipo!=='inventario' || areaActual().rack.porCodmat || r.area && r.area!==areaActualId) return; // Mallas: mallas.js
+  if(r.recargar){ invRender(true).then(()=>{ if(typeof invConsAlCambiar==='function') invConsAlCambiar(); }); return; } // el administrador borró movimientos: se vuelve a pedir todo
   if(invVersion<0 || r.version<=invVersion) return;       // todavía nada cargado, o ya aplicado
   if(r.version!==invVersion+1){ invRender(true); return; } // se perdió algún cambio en el medio
   invStock = new Map((r.stock||[]).map(s=>[invClave(s.material, s.medida), s.cantidad]));
@@ -410,14 +417,15 @@ function invDibujarMovimientos(){
     const etiqueta = tipo==='mixto' ? 'Mixto' : tipo==='salida' ? 'Salida' : 'Entrada';
     const detalle = mv.items.map(l=>`<span class="movItem ${l.tipo}">${l.tipo==='salida'?'−':'+'}${l.cantidad} <b>${escapeHtml(invNombreCorto(invMaterial(l.material) || {nombre:l.materialNombre}))}</b> ${escapeHtml(l.medida)} mm</span>`).join('');
     return `<tr>
-      <td class="mono">${escapeHtml(new Date(mv.fecha).toLocaleString('es-CO', {dateStyle:'short', timeStyle:'short'}))}</td>
+      ${haTd(mv.id)}<td class="mono">${escapeHtml(new Date(mv.fecha).toLocaleString('es-CO', {dateStyle:'short', timeStyle:'short'}))}</td>
       <td><span class="movTag ${tipo}">${etiqueta}</span></td>
       <td class="movDetalle"><div class="movItems">${detalle}</div>${mv.nota?`<small>${escapeHtml(mv.nota)}</small>`:''}</td>
       <td class="mono">${sale?'−'+sale:''}${sale&&entra?' / ':''}${entra?'+'+entra:''}</td>
       <td>${escapeHtml(mv.usuario || 'sin sesión')}</td>
     </tr>`;
   }).join('');
-  wrap.innerHTML = `<table class="ordTable"><thead><tr><th>Fecha</th><th>Tipo</th><th>Detalle</th><th>Unidades</th><th>Usuario</th></tr></thead><tbody>${filas}</tbody></table>`;
+  wrap.innerHTML = haBarra() + `<table class="ordTable"><thead><tr>${haTh()}<th>Fecha</th><th>Tipo</th><th>Detalle</th><th>Unidades</th><th>Usuario</th></tr></thead><tbody>${filas}</tbody></table>`;
+  haAplicar('invMovs', async ids=>{ await haEliminarMovimientos(ids); await invRender(true); if(typeof invConsAlCambiar==='function') invConsAlCambiar(); });
 }
 function invDibujarKpis(){
   let total = 0, combinaciones = 0;

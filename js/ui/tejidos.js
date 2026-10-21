@@ -62,7 +62,7 @@ async function tjRender(silencioso){
     return;
   }
   // los tejidos que pide la Lista de corte (para elegir rápido); de la memoria del puente, no de SQL
-  if(areaTieneVista('ordenes') && typeof ordUltimaLista!=='undefined' && ordUltimaLista.area!==areaActualId) await ordRefrescar({ auto: true }).catch(()=>{});
+  if(areaTieneVista('ordenes') && typeof ordUltimaLista!=='undefined' && ordUltimaLista.area!==areaActualId) ordRefrescar({ auto: true }).then(()=>{ if(area===areaActualId) tjDibujarTodo(); }, ()=>{}); // sin esperarla: el rack se ve ya
   tjDibujarTodo();
 }
 function tjDibujarTodo(){
@@ -205,13 +205,13 @@ function tjDibujarHist(){
     ? `<b>${h.total}</b> movimiento${h.total===1 ? '' : 's'} · <b>${cuenta('entrada')}</b> entradas · <b>${cuenta('salida')}</b> salidas${h.total > evs.length ? ` · se muestran los ${evs.length} más nuevos (acotá el período o la búsqueda)` : ''}`
     : '';
   if(!evs.length){ document.getElementById('tjHist').innerHTML = '<div class="empty">No hay movimientos con ese filtro.</div>'; return; }
-  document.getElementById('tjHist').innerHTML = `<table><thead><tr>
-      <th>Fecha</th><th>Movimiento</th><th>Posición</th><th>Tejido</th><th>Vehículo</th><th>Responsables</th><th>Resistencias</th><th>Ensamble</th><th>Usuario</th><th>Foto</th>
+  document.getElementById('tjHist').innerHTML = haBarra() + `<table><thead><tr>
+      ${haTh()}<th>Fecha</th><th>Movimiento</th><th>Posición</th><th>Tejido</th><th>Vehículo</th><th>Responsables</th><th>Resistencias</th><th>Ensamble</th><th>Usuario</th><th>Foto</th>
     </tr></thead><tbody>${evs.map((e, i)=>{
       const detalle = e.evento==='salida' && e.fechaEntrada ? `<br><small class="hint">estuvo ${escapeHtml(tjDuracion(e.fechaEntrada, e.fecha))}${e.motivo ? ' · ' + escapeHtml(e.motivo) : ''}</small>`
         : e.evento==='tamano' ? `<br><small class="hint">${escapeHtml((e.antes ? e.antes + ' → ' : '') + e.tamano)}</small>` : '';
       return `<tr>
-        <td>${escapeHtml(tjFecha(e.fecha))}</td>
+        ${haTd(e.id)}<td>${escapeHtml(tjFecha(e.fecha))}</td>
         <td><span class="tjEv ${escapeHtml(e.evento)}">${escapeHtml(TJ_EVENTO[e.evento] || e.evento)}</span>${detalle}</td>
         <td class="pos">${escapeHtml(e.pos || '—')}</td>
         <td class="mat">${escapeHtml(e.nombre || '—')}<br><small class="hint">${escapeHtml(e.codmat)}</small></td>
@@ -222,6 +222,7 @@ function tjDibujarHist(){
         <td>${escapeHtml(e.usuario || '—')}</td>
         <td>${e.foto ? `<button type="button" class="secondary tjVerFoto" data-i="${i}">Ver</button>` : ''}</td></tr>`;
     }).join('')}</tbody></table>`;
+  haAplicar('tjHist', async ids=>{ await tjPedir('POST', '/historial/eliminar', { ids }); await tjHistCargar(true); await tjRender(true); });
 }
 /* Un movimiento del historial en la misma ventana del detalle, pero solo para mirar. */
 function tjVerMovimiento(e){
@@ -397,10 +398,10 @@ async function tjDarEntrada(){
     if(!tjIdCliente) tjIdCliente = tjNuevoId();
     const cat = tjCatalogo().find(x=>x.codmat===tjElegido.codmat);
     const r = await tjPedir('POST', '/entrada', { idCliente: tjIdCliente, codmat: tjElegido.codmat, nombre: tjElegido.nombre, vehiculo: (cat && cat.vehiculo) || '',
-      responsables: v('tjResponsables'), resistencia1: v('tjR1'), resistencia2: v('tjR2'), ensamble: v('tjEnsamble'), foto: tjFotoSubida });
-    // desde el celular no se imprime ni se baja el PDF: el sticker se saca después
-    // desde la PC con "Reimprimir sticker" (pedido del usuario)
-    const impreso = tjEsCelular() ? 'El sticker se imprime desde la PC: abrí la posición y tocá "Reimprimir sticker".'
+      responsables: v('tjResponsables'), resistencia1: v('tjR1'), resistencia2: v('tjR2'), ensamble: v('tjEnsamble'), foto: tjFotoSubida, celular: tjEsCelular() });
+    // desde el celular no se imprime ni se baja el PDF: lo imprime la PC donde está abierta la app
+    // con el MISMO usuario (el puente se lo pide); si no hay ninguna, se reimprime después desde la PC
+    const impreso = tjEsCelular() ? (r.imprimirAqui ? await tjImprimirSoloZebra(r.unidad, r.posicion) : r.impresoEnPc ? 'El sticker se está imprimiendo en la PC donde tenés abierta tu sesión.' : 'No hay ninguna PC abierta con tu usuario: el sticker se saca después desde la PC (abrí la posición y tocá "Reimprimir sticker").')
                                   : await tjImprimir(r.unidad, r.posicion);
     const res = document.getElementById('tjResultado');
     res.hidden = false;
@@ -418,6 +419,18 @@ async function tjDarEntrada(){
 }
 /* Celular o tablet: pantalla táctil y angosta. Ahí la entrada no imprime. */
 const tjEsCelular = () => navigator.maxTouchPoints > 0 && window.matchMedia('(max-width: 900px)').matches;
+/* Desde el celular, con Zebra propia en el puente: solo Zebra (un PDF en el celular no sirve). */
+async function tjImprimirSoloZebra(unidad, posicion){
+  try { await imprimirStickerTejidoZPL(unidad, posicion); return 'Sticker enviado a tu Zebra.'; }
+  catch(e){ return 'No se pudo imprimir (' + e.message + '). Reimprimilo desde la PC: abrí la posición y tocá "Reimprimir sticker".'; }
+}
+/* Pedido del puente: un celular de este usuario dio entrada y el sticker se imprime acá. */
+async function tjImprimirPedido(ev){
+  if(!ev || !ev.unidad || tjEsCelular()) return;
+  const txt = await tjImprimir(ev.unidad, ev.posicion);
+  const msg = document.getElementById('tjMsg');
+  if(msg){ msg.className = 'hint'; msg.textContent = `Entrada hecha desde el celular (${ev.posicion}): ${txt}`; }
+}
 /* Zebra primero; si no está, PDF. */
 async function tjImprimir(unidad, posicion){
   try { await imprimirStickerTejidoZPL(unidad, posicion); return 'Sticker enviado a la Zebra.'; }

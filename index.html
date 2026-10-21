@@ -10,7 +10,7 @@
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Manrope:wght@600;700;800&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;700&display=swap">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
-<link rel="stylesheet" href="css/styles.css?v=20261021g">
+<link rel="stylesheet" href="css/styles.css?v=20261021l">
 </head>
 <body data-area="papel">
 
@@ -398,6 +398,7 @@
           <input type="text" id="ordBuscarInput" placeholder="Filtrar por orden, CodMat, vehículo, puesto..." aria-label="Filtrar la lista de corte">
         </div>
         <button class="secondary" id="ordAddAllVisibleBtn" data-areas="papel">+ Agregar visibles al lote</button>
+        <button class="secondary" id="ordAddPuestosBtn" data-areas="papel" title="Pasa al lote las órdenes cuyo puesto de trabajo es 01CORTE, 02CNC, 03SERIG o 04SER_VT">+ Puestos 01 a 04</button>
       </div>
       <div class="ordTableScroll" id="ordTableWrap">
         <div class="empty">Cargando la lista…</div>
@@ -407,7 +408,7 @@
     <!-- Papel: el lote, y al pie lo que se hace con él (Ejecutar → Confirmar) -->
     <div class="panel sidepanel lotePanel" data-areas="papel">
       <div class="cartHead"><h3>Lote actual</h3><span class="cartCount" id="ordLoteCountChip">0</span></div>
-      <div class="hint" style="margin-top:0">Si después de nestear una pieza no entra, sacala con ✕ (vuelve sola a la lista) y agregá otra.</div>
+      <div class="hint" style="margin-top:0">Al abrir la lista entran solas las órdenes de los puestos 01 a 04 (01CORTE, 02CNC, 03SERIG, 04SER_VT); con "+ Puestos 01 a 04" se vuelven a cargar. Si después de nestear una pieza no entra, sacala con ✕ (vuelve sola a la lista) y agregá otra.</div>
       <div class="ordTableScroll" id="ordLoteWrap">
         <div class="empty">Todavía no agregaste ninguna orden al lote.</div>
       </div>
@@ -812,57 +813,58 @@
 </div>
 
 <!-- ===== núcleo geométrico (sin dependencias del resto) ===== -->
-<script src="js/core/geometry.js?v=20261021g"></script>
-<script src="js/core/polygon.js?v=20261021g"></script>
-<script src="js/core/transform.js?v=20261021g"></script>
-<script src="js/core/areas-config.js?v=20261021g"></script>
+<script src="js/core/geometry.js?v=20261021l"></script>
+<script src="js/core/polygon.js?v=20261021l"></script>
+<script src="js/core/transform.js?v=20261021l"></script>
+<script src="js/core/areas-config.js?v=20261021l"></script>
 
 <!-- ===== lectura y reparación de DXF ===== -->
-<script src="js/dxf/parser.js?v=20261021g"></script>
-<script src="js/dxf/repair.js?v=20261021g"></script>
+<script src="js/dxf/parser.js?v=20261021l"></script>
+<script src="js/dxf/repair.js?v=20261021l"></script>
 
 <!-- ===== motor de nesting ===== -->
-<script src="js/nesting/orientation.js?v=20261021g"></script>
-<script src="js/nesting/placement.js?v=20261021g"></script>
-<script src="js/nesting/scoring.js?v=20261021g"></script>
-<script src="js/nesting/optimization.js?v=20261021g"></script>
+<script src="js/nesting/orientation.js?v=20261021l"></script>
+<script src="js/nesting/placement.js?v=20261021l"></script>
+<script src="js/nesting/scoring.js?v=20261021l"></script>
+<script src="js/nesting/optimization.js?v=20261021l"></script>
 
 <!-- ===== puente al Web Worker real (Bloque 3) ===== -->
-<script src="js/nesting/worker-bridge.js?v=20261021g"></script>
+<script src="js/nesting/worker-bridge.js?v=20261021l"></script>
 
 <!-- ===== tiras de relleno automáticas ===== -->
-<script src="js/strips/strips.js?v=20261021g"></script>
+<script src="js/strips/strips.js?v=20261021l"></script>
 
 <!-- ===== interfaz ===== -->
-<script src="js/ui/html.js?v=20261021g"></script>
-<script src="js/ui/areas.js?v=20261021g"></script>
-<script src="js/ui/pieces.js?v=20261021g"></script>
-<script src="js/ui/render.js?v=20261021g"></script>
-<script src="js/ui/history.js?v=20261021g"></script>
-<script src="js/ui/repair.js?v=20261021g"></script>
+<script src="js/ui/html.js?v=20261021l"></script>
+<script src="js/ui/areas.js?v=20261021l"></script>
+<script src="js/ui/pieces.js?v=20261021l"></script>
+<script src="js/ui/render.js?v=20261021l"></script>
+<script src="js/ui/history.js?v=20261021l"></script>
+<script src="js/ui/repair.js?v=20261021l"></script>
 
 <!-- ===== orquestación del motor (une UI + nesting) ===== -->
-<script src="js/nesting/engine.js?v=20261021g"></script>
+<script src="js/nesting/engine.js?v=20261021l"></script>
 
 <!-- ===== exportación ===== -->
-<script src="js/export/dxf.js?v=20261021g"></script>
-<script src="js/export/zip.js?v=20261021g"></script>
-<script src="js/export/pdf.js?v=20261021g"></script>
-<script src="js/export/stickers.js?v=20261021g"></script>
-<script src="js/export/excel.js?v=20261021g"></script>
+<script src="js/export/dxf.js?v=20261021l"></script>
+<script src="js/export/zip.js?v=20261021l"></script>
+<script src="js/export/pdf.js?v=20261021l"></script>
+<script src="js/export/stickers.js?v=20261021l"></script>
+<script src="js/export/excel.js?v=20261021l"></script>
 
 <!-- ===== arranque de la app (áreas, pestañas, sesión) ===== -->
-<script src="js/ui/orders.js?v=20261021g"></script>
-<script src="js/ui/inventario.js?v=20261021g"></script>
-<script src="js/ui/mallas.js?v=20261021g"></script>
-<script src="js/ui/tejidos.js?v=20261021g"></script>
-<script src="js/ui/inventario-vistas.js?v=20261021g"></script>
-<script src="js/ui/tecoflex-nesting.js?v=20261021g"></script>
-<script src="js/ui/tiempo-real.js?v=20261021g"></script>
-<script src="js/ui/auth.js?v=20261021g"></script>
-<script src="js/ui/usuarios.js?v=20261021g"></script>
-<script src="js/ui/aprobaciones.js?v=20261021g"></script>
-<script src="js/app.js?v=20261021g"></script>
+<script src="js/ui/historial-admin.js?v=20261021l"></script>
+<script src="js/ui/orders.js?v=20261021l"></script>
+<script src="js/ui/inventario.js?v=20261021l"></script>
+<script src="js/ui/mallas.js?v=20261021l"></script>
+<script src="js/ui/tejidos.js?v=20261021l"></script>
+<script src="js/ui/inventario-vistas.js?v=20261021l"></script>
+<script src="js/ui/tecoflex-nesting.js?v=20261021l"></script>
+<script src="js/ui/tiempo-real.js?v=20261021l"></script>
+<script src="js/ui/auth.js?v=20261021l"></script>
+<script src="js/ui/usuarios.js?v=20261021l"></script>
+<script src="js/ui/aprobaciones.js?v=20261021l"></script>
+<script src="js/app.js?v=20261021l"></script>
 
 <!-- Aviso de seguridad: si el CSS o el JS no llegaron a cargar (por ej.
      si abriste este archivo haciendo doble clic ADENTRO de un .zip sin

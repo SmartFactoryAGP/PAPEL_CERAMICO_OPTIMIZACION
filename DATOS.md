@@ -46,6 +46,7 @@ server/datos/
 - **Trazabilidad:** todo movimiento queda registrado con **quién** lo hizo y **cuándo**. Nadie puede usar la app sin usuario.
 - **Formato:** archivos de texto JSON, legibles con cualquier editor. Se pueden abrir para auditoría.
 - **Consumo de Tecoflex:** no tiene archivo propio: sale del diario `tecoflex/movimientos.jsonl` (cada salida queda ahí con fecha, material, medida y cantidad). Al arrancar, el puente lo suma por día, material y medida; la vista "Consumo" del Rack lo consulta de ahí. No se pierde nada ni hay que cargar datos aparte.
+- **Borrar registros de un historial:** solo el administrador, desde las tablas de movimientos (Tecoflex, Mallas) y el Historial de Tejidos (casillas + "Eliminar seleccionados"). El archivo se reescribe sin esos registros y lo borrado queda aparte, con quién y cuándo, en `eliminados.jsonl` (Tecoflex/Mallas) o `historial-eliminado.jsonl` (Tejidos). En Tecoflex y Mallas el stock y el consumo se rehacen del diario que queda; no se deja borrar si el stock quedaría negativo. En Tejidos solo se borra el registro: lo que hay hoy en las posiciones no cambia.
 - **Historiales:** una línea por evento (`.jsonl`) que solo se agrega al final; nunca se reescriben enteros. Con un año de uso, cada movimiento sigue tardando lo mismo que el primer día. El `historial.json` del formato anterior se convierte solo al arrancar el puente, y el original queda en `_anteriores/`.
 
 ## Respaldos y recuperación

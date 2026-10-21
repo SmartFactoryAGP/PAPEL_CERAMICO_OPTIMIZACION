@@ -124,6 +124,7 @@ function ordApiHeaders(extra){
    - y cuando el puente avisa en vivo que la renovó (aviso "lista").
    Nada de esto llega a SQL. */
 let ordUltimaLista = { area: null, actualizado: null };
+let ordPuestosCargados = false;  // ya se pasaron al lote las órdenes de los puestos 01 a 04 (papel)
 let ordAutoTimer = null;
 const ordHora = iso => new Date(iso).toLocaleTimeString('es-CO', {hour:'2-digit', minute:'2-digit'});
 function ordProgramarAuto(proximaIso){
@@ -141,8 +142,15 @@ function ordCargarSiHaceFalta(){
   if(ordUltimaLista.area !== areaActualId) ordRefrescar();
 }
 
+/* Pedido más reciente de la lista, por área. La lista puede tardar (la primera
+   consulta a SQL); si en ese rato se cambia de área, la respuesta de la otra
+   área NO se pinta (antes Mallas mostraba la lista de Tejidos), y si se pide
+   dos veces la misma, solo vale la última. */
+const ordPedidoN = {};
 async function ordRefrescar(opciones){
   const auto = !!(opciones && opciones.auto), forzar = !!(opciones && opciones.forzar);
+  const area = areaActualId, pedido = ordPedidoN[area] = (ordPedidoN[area]||0) + 1;
+  const vigente = () => area===areaActualId && pedido===ordPedidoN[area];
   if(typeof authEstaLogueado==='function' && !authEstaLogueado()) return;
   if(areaActual().listaCorte===false) return;
   // no se le cambia la lista a quien está nesteando: se reintenta en 2 min
@@ -154,6 +162,8 @@ async function ordRefrescar(opciones){
     document.getElementById('ordConfirmBtn').disabled = true;
     status.textContent = forzar ? 'Consultando SQL...' : 'Cargando la lista...';
   }
+  // si tarda (el puente está consultando SQL por primera vez), se avisa en vez de quedar mudo
+  const avisoLento = auto ? null : setTimeout(()=>{ if(vigente()) status.textContent = 'El puente está consultando SQL; la primera vez puede tardar unos minutos…'; }, 8000);
   try {
     // automática y ya con la lista de esta área: se manda la versión que se tiene y, si
     // no cambió, el puente contesta {sinCambios} (unos bytes en vez de la lista entera)
@@ -162,6 +172,8 @@ async function ordRefrescar(opciones){
     const res = await fetch(ordBridgeUrl()+'/api/ordenes-pendientes'+q, {headers: ordApiHeaders()});
     if(!res.ok) throw await ordErrorDeRespuesta(res);
     const data = await res.json();
+    clearTimeout(avisoLento);
+    if(!vigente()) return; // cambiaste de área (o hay un pedido más nuevo) mientras llegaba
     ordProgramarAuto(data.proxima);
     // automática y sin cambios: no se toca nada de la pantalla
     if(data.sinCambios || (auto && ordUltimaLista.area===areaActualId && ordUltimaLista.version===data.version)) return;
@@ -175,6 +187,7 @@ async function ordRefrescar(opciones){
       // real (esa tabla no se tocó), así que se saca de la vista acá
       // nomás, comparando contra lo que ya está en el Rack simulado.
       const rackActual = await rackSimuladoTraer().catch(()=>[]);
+      if(!vigente()) return;
       const yaEnRack = new Set(rackActual.map(o=>o.Ordem_Serial));
       const antes = pendientes.length;
       pendientes = pendientes.filter(o=>!yaEnRack.has(o.Ordem_Serial));
@@ -192,6 +205,9 @@ async function ordRefrescar(opciones){
     });
     if(sacadasDelLote) nota += ` (${sacadasDelLote} se sacaron solas del lote: ya no estaban pendientes)`;
 
+    // papel: la primera vez que llega la lista, las órdenes de los puestos 01 a 04 pasan solas al lote
+    // (una sola vez: si después sacás alguna con ✕, no vuelve; el botón "+ Puestos 01 a 04" las recarga)
+    if(area==='papel' && !ordPuestosCargados){ ordPuestosCargados = true; const antes = ordEnLoteIds.size; ordenesPendientes.forEach(o=>{ if(ordEsPuesto0a4(o)) ordEnLoteIds.add(String(o.Ordem_Serial)); }); if(ordEnLoteIds.size>antes) nota += ` (${ordEnLoteIds.size-antes} de los puestos 01 a 04 ya están en el lote)`; }
     status.textContent = `Lista de las ${ordHora(data.actualizado)} · se actualiza sola a las ${ordHora(data.proxima)}${nota}`;
     if(data.aviso) status.textContent += ' — ⚠ ' + data.aviso;
     if(otraArea) ordSort = { campo: null, dir: -1 };
@@ -202,7 +218,8 @@ async function ordRefrescar(opciones){
     // hecho: si ninguna orden del lote se fue, "Confirmar" queda como estaba
     if(auto && !sacadasDelLote && areaActual().nesting) document.getElementById('ordConfirmBtn').disabled = confirmAntes;
   } catch(e){
-    if(auto) return; // la automática falla en silencio: se sigue viendo la última lista
+    clearTimeout(avisoLento);
+    if(auto || !vigente()) return; // la automática falla en silencio: se sigue viendo la última lista
     status.textContent = e.pendiente
       ? e.message
       : 'No se pudo conectar al puente (¿está corriendo el servidor en tu PC?): '+e.message;
@@ -212,15 +229,17 @@ async function ordRefrescar(opciones){
     ordRenderLote();
     ordActualizarBotonEjecutar();
   }
-  await ordActualizarResumenDia();
+  if(vigente()) await ordActualizarResumenDia();
 }
 
 async function ordActualizarResumenDia(){
   const box = document.getElementById('ordResumenDia');
+  const area = areaActualId;
   try {
     const res = await fetch(ordBridgeUrl()+'/api/rack-resumen-dia', {headers: ordApiHeaders()});
     if(!res.ok) throw new Error('HTTP '+res.status);
     const r = await res.json();
+    if(area!==areaActualId) return;
     box.textContent = r.entradasHoy!=null // rack por cantidad (Mallas): unidades
       ? `Entraron hoy: ${r.entradasHoy} · Salieron hoy: ${r.salidasHoy} · En stock: ${r.enStock}`
       : `Cortadas hoy: ${r.cortadasHoy} · Sacadas hoy: ${r.sacadasHoy} · En rack ahora: ${r.enRackAhora}`;
@@ -435,6 +454,18 @@ document.getElementById('ordStagePanel').addEventListener('click', (ev)=>{
   if(quitBtn){ ordQuitarDelLote(quitBtn.getAttribute('data-orden')); return; }
 });
 
+/* Puestos de trabajo 01 a 04 (01CORTE, 02CNC, 03SERIG, 04SER_VT): lo que está en planta para
+   cortar; Planeación (lo que todavía no llegó) queda afuera. Pasa esas órdenes al lote de una vez. */
+const ordEsPuesto0a4 = o => /^0[1-4]/.test(String(o.Puestodetrabajo||'').trim());
+function ordCargarPuestos(){
+  let n = 0;
+  ordenesPendientes.forEach(o=>{ const k = String(o.Ordem_Serial); if(ordEsPuesto0a4(o) && !ordEnLoteIds.has(k)){ ordEnLoteIds.add(k); n++; } });
+  if(n){ ordRenderTabla(); ordRenderLote(); ordActualizarBotonEjecutar(); }
+  return n;
+}
+document.getElementById('ordAddPuestosBtn').addEventListener('click', ()=>{
+  if(!ordCargarPuestos()) alert('No hay órdenes nuevas de los puestos 01 a 04 para agregar (las que hay ya están en el lote).');
+});
 document.getElementById('ordAddAllVisibleBtn').addEventListener('click', ()=>{
   const filtro = ordFiltroTexto();
   const visibles = ordenesPendientes.filter(o=>!ordEnLoteIds.has(String(o.Ordem_Serial)) && ordCoincideFiltro(o, filtro));
@@ -1061,6 +1092,7 @@ alCambiarArea(()=>{
   ordenesPendientes = [];
   ordUltimaLista = { area: null, actualizado: null }; // la del área nueva se trae al abrir la pestaña
   clearTimeout(ordAutoTimer);
+  ordPuestosCargados = false;
   ordEnLoteIds.clear();
   ordLoteEstado.clear();
   ordLote = [];
