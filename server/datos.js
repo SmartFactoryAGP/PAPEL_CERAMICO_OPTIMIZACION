@@ -4,7 +4,7 @@
      server/datos/
        usuarios.json                 usuarios, contraseñas (cifradas) y permisos
        papel/rack.json               órdenes en el rack de papel cerámico (A1…G20)
-       papel/historial.json          entradas / salidas / reentradas de ese rack
+       papel/historial.jsonl         entradas / salidas / reentradas de ese rack (una línea por evento, solo se agrega)
        papel/aprobaciones.json       ZFER aprobados (CURVE 02–04 que llevan papel)
        mallas/movimientos.jsonl      diario de entradas y salidas por CodMat (fuente de verdad)
        mallas/inventario.json        foto legible del stock de mallas
@@ -34,7 +34,8 @@ function carpetaArea(areaId){
 const rutas = {
   usuarios:    ()     => path.join(DATOS, 'usuarios.json'),
   rack:        areaId => path.join(carpetaArea(areaId), 'rack.json'),
-  historial:   areaId => path.join(carpetaArea(areaId), 'historial.json'),
+  historial:   areaId => path.join(carpetaArea(areaId), 'historial.jsonl'),
+  historialViejo: areaId => path.join(carpetaArea(areaId), 'historial.json'), // formato anterior (un arreglo); se convierte solo
   aprobaciones: areaId => path.join(carpetaArea(areaId), 'aprobaciones.json'), // ZFER aprobados para Lista de corte (papel)
   diario:      areaId => path.join(carpetaArea(areaId), 'movimientos.jsonl'),
   inventario:  areaId => path.join(carpetaArea(areaId), 'inventario.json'),
@@ -81,12 +82,30 @@ function migrar(areaIds){
     Object.keys(porArea).forEach(a=>{
       if(!areaIds.includes(a)) return;
       const destino = rutas.historial(a);
-      if(fs.existsSync(destino)) return;
-      fs.writeFileSync(destino, JSON.stringify(porArea[a], null, 2), 'utf8');
+      if(fs.existsSync(destino) || fs.existsSync(rutas.historialViejo(a))) return;
+      fs.writeFileSync(destino, porArea[a].map(h=>JSON.stringify(h)).join('\n') + '\n', 'utf8');
       log.push(`rack-historial.json (${porArea[a].length} de ${a}) -> ${path.relative(SERVIDOR, destino)}`);
     });
     guardarAnterior(histViejo);
   }
+  /* historial de cada rack de casillas: de arreglo JSON (historial.json) a una
+     línea por evento (historial.jsonl). Con el arreglo, cada entrada o salida
+     reescribía el archivo ENTERO (con un año de uso, ~28 MB y ~0,5 s por
+     movimiento); ahora se agrega una línea. Una sola vez; el original queda
+     en _anteriores/<área>-historial.json. */
+  areaIds.forEach(a=>{
+    const viejo = path.join(DATOS, a, 'historial.json'), nuevo = path.join(DATOS, a, 'historial.jsonl');
+    if(!fs.existsSync(viejo) || fs.existsSync(nuevo)) return;
+    const texto = fs.readFileSync(viejo, 'utf8');
+    const lista = texto.trim() ? JSON.parse(texto) : []; // dañado: que falle al arrancar y se vea, sin perder nada
+    fs.writeFileSync(nuevo + '.tmp', lista.map(h=>JSON.stringify(h)).join('\n') + (lista.length ? '\n' : ''), 'utf8');
+    fs.renameSync(nuevo + '.tmp', nuevo);
+    fs.mkdirSync(ANTERIORES, { recursive: true });
+    let destino = path.join(ANTERIORES, a + '-historial.json');
+    if(fs.existsSync(destino)) destino += '.' + Date.now();
+    fs.renameSync(viejo, destino);
+    log.push(`${a}/historial.json (${lista.length} eventos) -> ${a}/historial.jsonl`);
+  });
   if(log.length) console.log('[datos] migración al formato por rack:\n  ' + log.join('\n  '));
 }
 

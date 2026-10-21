@@ -30,7 +30,36 @@ const { codmatCorto } = require('./reglas-mallas');
 const MAX_CANTIDAD = 100000;
 const MAX_LINEAS = 500;
 const RECIENTES = 300;  // movimientos que se mandan a la pantalla
+/* En memoria solo hace falta lo que se muestra (los últimos RECIENTES) y lo de
+   HOY (los totales del día); el diario en disco sigue teniendo TODO. Antes se
+   guardaba el año entero en memoria (~3 KB por movimiento masivo de Tecoflex). */
+const MAX_EN_MEMORIA = 2000;
+function recortar(inv){
+  if(inv.movimientos.length <= MAX_EN_MEMORIA) return; // se recorta de a tandas, no en cada movimiento
+  let desde = inv.movimientos.length - RECIENTES;
+  while(desde > 0 && esHoy(inv.movimientos[desde-1].fecha)) desde--; // los de hoy se quedan todos
+  inv.movimientos.splice(0, desde).forEach(mv=>{ if(mv.idCliente && inv.porIdCliente.get(mv.idCliente)===mv) inv.porIdCliente.delete(mv.idCliente); });
+}
 const invClave = (m, d) => m+'|'+d;
+
+/* CONSUMO: cuánto entró y salió de cada (material, medida) en cada DÍA. Se arma al
+   cargar el diario (que tiene TODO el historial) y se va sumando en cada movimiento:
+   así la pantalla de consumo contesta al instante sin releer el diario ni guardar
+   todos los movimientos en memoria. dias: 'AAAA-MM-DD' (hora local) -> Map clave -> [sale, entra] */
+const dosDig = n => String(n).padStart(2, '0');
+const diaLocal = f => { const x = new Date(f); return isNaN(x) ? '' : `${x.getFullYear()}-${dosDig(x.getMonth()+1)}-${dosDig(x.getDate())}`; };
+function sumarConsumo(inv, mv){
+  const dia = diaLocal(mv.fecha);
+  if(!dia) return;
+  let m = inv.dias.get(dia);
+  if(!m){ m = new Map(); inv.dias.set(dia, m); }
+  mv.items.forEach(l=>{
+    const k = invClave(l.material, l.medida);
+    const c = m.get(k) || [0, 0];
+    c[l.tipo==='salida' ? 0 : 1] += l.cantidad;
+    m.set(k, c);
+  });
+}
 
 function exigirInventario(area){
   if(area.rack.tipo !== 'inventario') throw errorHttp(`${area.nombre} no maneja inventario por material y medida.`);
@@ -116,7 +145,7 @@ function crear({ datos, notificar }){
       fs.renameSync(viejo, viejo + '.migrado');
       console.log(`[inventario] ${area.id}: ${lista.length} movimiento(s) migrados a ${path.basename(diario)}`);
     }
-    inv = {version:0, stock:new Map(), movimientos:[], porIdCliente:new Map(), nombres: area.rack.porCodmat ? new Map() : null};
+    inv = {version:0, stock:new Map(), movimientos:[], dias:new Map(), porIdCliente:new Map(), nombres: area.rack.porCodmat ? new Map() : null};
     // claves viejas de material -> la actual (campo "alias" en areas-config.js).
     // El diario NO se reescribe: la traducción es solo en memoria.
     const alias = new Map();
@@ -137,8 +166,11 @@ function crear({ datos, notificar }){
         normalizar(mv.items);
         aplicarAlStock(inv.stock, mv.items);
         recordarNombres(inv, mv.items);
+        sumarConsumo(inv, mv);
         inv.movimientos.push(mv);
         if(mv.idCliente) inv.porIdCliente.set(mv.idCliente, mv);
+        inv.version++;
+        recortar(inv);
       });
       if(malas) console.error(`[inventario] ${area.id}: ${malas} línea(s) ilegibles en ${path.basename(diario)} — se saltearon`);
     }
@@ -147,7 +179,6 @@ function crear({ datos, notificar }){
     const conocidos = new Set((area.materiales||[]).map(m=>m.id));
     const huerfanos = area.rack.porCodmat ? [] : [...new Set([...inv.stock.keys()].map(k=>k.split('|')[0]).filter(m=>!conocidos.has(m)))];
     if(huerfanos.length) console.error(`[inventario] ${area.id}: hay stock de material(es) que no están en js/core/areas-config.js: ${huerfanos.join(', ')} — agregalos ahí (o como "alias" del material correcto)`);
-    inv.version = inv.movimientos.length;
     inventarios.set(area.id, inv);
     // la foto legible se guarda con atraso (ver programarFoto): si el puente
     // se cerró en ese segundo quedó vieja, así que se rehace al cargar
@@ -229,16 +260,45 @@ function crear({ datos, notificar }){
     fs.appendFileSync(diarioPath(area), JSON.stringify(movimiento) + '\n', 'utf8');
     aplicarAlStock(inv.stock, lineas);
     recordarNombres(inv, lineas);
+    sumarConsumo(inv, movimiento);
     inv.movimientos.push(movimiento);
     if(idCliente) inv.porIdCliente.set(idCliente, movimiento);
     inv.version++;
+    recortar(inv);
     const stock = stockComoLista(inv), hoy = totalesDeHoy(inv);
     programarFoto(area, inv);
     notificar({ tipo:'inventario', area: area.id, version: inv.version, movimiento, stock, hoy });
     return { status: 200, cuerpo: { ok: true, version: inv.version, movimiento, stock, hoy } };
   }
 
-  return { de, consultar, registrar, stockPorMaterial: area => stockPorMaterial(de(area)), version: area => de(area).version };
+  /* Consumo del período [desde, hasta] (AAAA-MM-DD, hora local; sin límite si falta uno):
+     por (material, medida) cuánto salió y cuánto entró, y los totales de cada día.
+     "primerDia" es el día del primer movimiento registrado (para saber desde cuándo hay datos). */
+  function consumo(area, { desde, hasta } = {}){
+    exigirInventario(area);
+    const inv = de(area);
+    const valido = s => /^\d{4}-\d{2}-\d{2}$/.test(String(s||'')) ? s : null;
+    const d = valido(desde), h = valido(hasta);
+    const acum = new Map(), porDia = [];
+    let sale = 0, entra = 0;
+    const dias = [...inv.dias.keys()].sort();
+    dias.forEach(dia=>{
+      if((d && dia < d) || (h && dia > h)) return;
+      let s = 0, e = 0;
+      inv.dias.get(dia).forEach(([sa, en], k)=>{
+        const x = acum.get(k) || { sale: 0, entra: 0 };
+        x.sale += sa; x.entra += en; acum.set(k, x);
+        s += sa; e += en;
+      });
+      porDia.push({ dia, sale: s, entra: e });
+      sale += s; entra += e;
+    });
+    const filas = [...acum].map(([k, x])=>{ const [material, medida] = k.split('|'); return { material, medida, sale: x.sale, entra: x.entra }; })
+      .filter(x=>x.sale || x.entra);
+    return { desde: d, hasta: h, version: inv.version, primerDia: dias[0] || null, filas, porDia, totales: { sale, entra } };
+  }
+
+  return { de, consultar, consumo, registrar, stockPorMaterial: area => stockPorMaterial(de(area)), version: area => de(area).version };
 }
 
 module.exports = { crear };

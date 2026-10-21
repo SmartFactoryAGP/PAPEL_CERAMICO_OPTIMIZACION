@@ -19,7 +19,7 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const { errorHttp, esHoy } = require('./comun');
+const { errorHttp } = require('./comun');
 const { codmatCorto } = require('./reglas-mallas');
 
 const FOTO_MAX_BYTES = 8 * 1048576;
@@ -66,7 +66,34 @@ function crear({ datos, notificar, area }){
   }
 
   let posiciones = [], tamanos = {}, ocupacion = {}, version = 0;
+  /* Rendimiento: el historial se lee del disco UNA vez (al arrancar) y queda
+     en memoria en forma compacta (lo que muestra la pestaña Historial), con
+     el día local de cada evento al lado. Antes, cada vez que una PC pedía el
+     rack se releía el archivo entero solo para contar "entraron hoy": con un
+     año de datos y 30 PCs, ~2 s por pedido. */
+  const eventos = [], dias = [];
+  const textos = []; // texto de búsqueda de cada evento, armado la primera vez que alguien busca
+  /* idCliente de las entradas recientes (un reintento no duplica la entrada).
+     Con tope: un reintento llega a los segundos, no hace falta recordarlos todos. */
   const porIdCliente = new Map();
+  const MAX_ID_CLIENTE = 5000;
+  const recordarId = ev => {
+    if(!ev.idCliente) return;
+    porIdCliente.set(ev.idCliente, { pos: ev.pos, unidad: ev.unidad });
+    if(porIdCliente.size > MAX_ID_CLIENTE) porIdCliente.delete(porIdCliente.keys().next().value);
+  };
+  const dosDig = n => String(n).padStart(2, '0');
+  const diaLocal = f => { const x = new Date(f); return isNaN(x) ? '' : `${x.getFullYear()}-${dosDig(x.getMonth()+1)}-${dosDig(x.getDate())}`; };
+  /* la fila que muestra el historial (sin los campos internos de la unidad) */
+  function compactar(ev){
+    const u = ev.unidad || {};
+    return { evento: ev.evento, fecha: ev.fecha, usuario: ev.usuario || '', pos: ev.pos || '',
+      codmat: u.codmat || ev.codmat || '', nombre: u.nombre || '', vehiculo: u.vehiculo || '',
+      tamano: ev.evento==='tamano' ? ev.tamano : (u.tamano || ''), antes: ev.antes || null,
+      responsables: u.responsables || '', resistencia1: u.resistencia1 || '', resistencia2: u.resistencia2 || '', ensamble: u.ensamble || '',
+      foto: u.foto || null, motivo: ev.motivo || null, fechaEntrada: ev.evento==='salida' ? (u.fecha || null) : null };
+  }
+  function anotar(ev){ eventos.push(compactar(ev)); dias.push(diaLocal(ev.fecha)); recordarId(ev); }
 
   function cargar(){
     posiciones = (leerJson('posiciones.json', []) || [])
@@ -78,7 +105,7 @@ function crear({ datos, notificar, area }){
     if(fs.existsSync(h)){
       fs.readFileSync(h, 'utf8').split('\n').forEach(t=>{
         if(!t.trim()) return;
-        try { const ev = JSON.parse(t); version++; if(ev.idCliente) porIdCliente.set(ev.idCliente, ev); } catch(e){ /* línea cortada por un apagón */ }
+        try { const ev = JSON.parse(t); version++; anotar(ev); } catch(e){ /* línea cortada por un apagón */ }
       });
     }
     const n = Object.keys(ocupacion).length;
@@ -88,31 +115,34 @@ function crear({ datos, notificar, area }){
   function registrar(ev){
     fs.appendFileSync(ruta('historial.jsonl'), JSON.stringify(ev) + '\n', 'utf8');
     version++;
-    if(ev.idCliente) porIdCliente.set(ev.idCliente, ev);
+    anotar(ev);
     notificar({ tipo: 'tejidos', area: area.id, version });
     notificar({ tipo: 'lista', area: area.id }); // el stock cambia lo que "Falta" en Lista de corte
   }
   const texto = (v, max) => String(v==null ? '' : v).trim().slice(0, max);
 
+  /* firma = versión + día: la PC que ya tiene esta firma no necesita que se le
+     mande el rack de nuevo (el día entra porque "hoy" cambia a medianoche) */
+  const firma = () => `${version}.${diaLocal(Date.now())}`;
   function estado(){
     return {
-      version,
+      version, firma: firma(),
       tamanos: TAMANOS,
       posiciones: posiciones.map(p=>({ pos: p.pos, tamano: p.tamano, unidad: ocupacion[p.pos] || null })),
       tamanosTejidos: tamanos,
       hoy: totalesDeHoy(),
     };
   }
+  /* los eventos están en orden de llegada: se cuentan desde el final hasta el primero de otro día */
   function totalesDeHoy(){
+    const hoy = diaLocal(Date.now());
     let entra = 0, sale = 0;
-    try {
-      const h = ruta('historial.jsonl');
-      if(fs.existsSync(h)) fs.readFileSync(h, 'utf8').split('\n').forEach(t=>{
-        if(!t.trim()) return; try { const ev = JSON.parse(t); if(!esHoy(ev.fecha)) return; if(ev.evento==='entrada') entra++; else if(ev.evento==='salida') sale++; } catch(e){}
-      });
-    } catch(e){}
+    for(let i=eventos.length-1; i>=0 && dias[i]===hoy; i--){
+      if(eventos[i].evento==='entrada') entra++; else if(eventos[i].evento==='salida') sale++;
+    }
     return { entra, sale };
   }
+  const ocupadas = () => { let n = 0; for(const k in ocupacion) n++; return n; };
 
   /* Stock por CodMat = posiciones ocupadas con ese tejido (lo usa "Falta" de Lista de corte). */
   function stockPorMaterial(){
@@ -211,39 +241,32 @@ function crear({ datos, notificar, area }){
   function historial({ desde, hasta, evento, texto: q, limite } = {}){
     const dia = s => /^\d{4}-\d{2}-\d{2}$/.test(String(s||'')) ? s : null;
     const d = dia(desde), h = dia(hasta);
-    const diaLocal = f => { const x = new Date(f); if(isNaN(x)) return ''; const p = n => String(n).padStart(2, '0'); return `${x.getFullYear()}-${p(x.getMonth()+1)}-${p(x.getDate())}`; };
     const busca = String(q||'').trim().toLowerCase().slice(0, 80);
     const tope = Math.min(Math.max(parseInt(limite, 10) || 1000, 1), 5000);
-    const r = ruta('historial.jsonl');
-    const lista = [];
-    if(fs.existsSync(r)) fs.readFileSync(r, 'utf8').split('\n').forEach(t=>{
-      if(!t.trim()) return;
-      let ev; try { ev = JSON.parse(t); } catch(e){ return; }
-      if(evento==='movimientos' ? ev.evento==='tamano' : (evento && ev.evento !== evento)) return;
-      const f = diaLocal(ev.fecha);
-      if((d && f < d) || (h && f > h)) return;
-      const u = ev.unidad || {};
+    const lista = []; let total = 0;
+    // en memoria, de lo más nuevo a lo más viejo (sin tocar el disco)
+    for(let i=eventos.length-1; i>=0; i--){
+      const e = eventos[i], f = dias[i];
+      if(h && f > h) continue;
+      if(d && f < d) break; // van en orden de llegada: de acá para atrás todo es más viejo
+      if(evento==='movimientos' ? e.evento==='tamano' : (evento && e.evento !== evento)) continue;
+      // nombre y vehículo que falten: los del Excel de tamaños (pueden haberse cargado después)
+      const t = tamanos[e.codmat] || {};
+      const nombre = e.nombre || t.nombre || '', vehiculo = e.vehiculo || t.vehiculo || '';
       if(busca){
-        const pajar = [ev.pos, ev.codmat, u.codmat, u.nombre, u.vehiculo, u.responsables, u.resistencia1, u.resistencia2, u.ensamble, ev.usuario, u.usuario, ev.motivo]
-          .filter(Boolean).join(' ').toLowerCase();
-        if(!pajar.includes(busca)) return;
+        let s = textos[i];
+        if(s===undefined) s = textos[i] = [e.pos, e.codmat, nombre, vehiculo, e.responsables, e.resistencia1, e.resistencia2, e.ensamble, e.usuario, e.motivo].join(' ').toLowerCase();
+        if(!s.includes(busca)) continue;
       }
-      lista.push({
-        evento: ev.evento, fecha: ev.fecha, usuario: ev.usuario || '', pos: ev.pos || '',
-        codmat: u.codmat || ev.codmat || '', nombre: u.nombre || (tamanos[ev.codmat] && tamanos[ev.codmat].nombre) || '',
-        vehiculo: u.vehiculo || (tamanos[u.codmat || ev.codmat] || {}).vehiculo || '',
-        tamano: ev.evento==='tamano' ? ev.tamano : (u.tamano || ''), antes: ev.antes || null,
-        responsables: u.responsables || '', resistencia1: u.resistencia1 || '', resistencia2: u.resistencia2 || '', ensamble: u.ensamble || '',
-        foto: u.foto || null, motivo: ev.motivo || null,
-        fechaEntrada: ev.evento==='salida' ? (u.fecha || null) : null,
-      });
-    });
-    lista.reverse();
-    return { total: lista.length, eventos: lista.slice(0, tope), version };
+      total++;
+      if(lista.length < tope) lista.push(nombre===e.nombre && vehiculo===e.vehiculo ? e : { ...e, nombre, vehiculo });
+    }
+    return { total, eventos: lista, version };
   }
 
   cargar();
-  return { estado, stockPorMaterial, tamanoDe, fijarTamano, guardarFoto, rutaFoto, entrada, salida, historial, version: ()=>version };
+  const resumenDia = () => { const h = totalesDeHoy(); return { entra: h.entra, sale: h.sale, ocupadas: ocupadas() }; };
+  return { estado, firma, resumenDia, stockPorMaterial, tamanoDe, fijarTamano, guardarFoto, rutaFoto, entrada, salida, historial, version: ()=>version };
 }
 
 module.exports = { crear, compararPos };

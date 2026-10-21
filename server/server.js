@@ -13,6 +13,8 @@
      GET  /api/ordenes-pendientes/:orden -> UNA orden por número, sin el filtro de Puestodetrabajo [ordenes]
      GET  /api/lote/:codigo              -> todas las órdenes 0132 de un Código_Lote [ordenes]
      GET  /api/dxf?orden=...&archivo=...  -> el contenido del DXF de una orden [ordenes]
+     GET  /api/tecoflex/dxf?medida=9      -> el DXF de la tira de esa medida (Tecoflex) [nesting]
+     GET  /api/inventario/consumo?desde=&hasta= -> consumo por material y medida en un período [rack]
      GET  /api/rack-simulado              -> rack de casillas compartido (archivo local, no SQL) [rack u ordenes]
      POST /api/rack-simulado/agregar      -> agrega una orden al rack [ordenes]
      POST /api/rack-simulado/:orden/salida -> saca una orden del rack [rack]
@@ -83,7 +85,8 @@ const AREAS_CONFIG = require(path.join(__dirname, '..', 'js', 'core', 'areas-con
 // la primera vez mueve ahí lo que estaba suelto en server/
 const datos = require('./datos');
 datos.migrar(Object.keys(AREAS_CONFIG.areas));
-const { errorHttp, esHoy } = require('./comun');
+const { errorHttp } = require('./comun');
+const comprimir = require('./comprimir');
 const usuarios = require('./usuarios');
 usuarios.iniciar(AREAS_CONFIG, process.env.AUTH_USUARIOS, datos.rutas.usuarios());
 const enVivo = require('./en-vivo').crear(usuarios);
@@ -198,6 +201,7 @@ app.use(cors({
   }
 }));
 app.use(express.json());
+app.use(comprimir.middlewareJson); // JSON de la API comprimido (gzip) cuando conviene: ver comprimir.js
 
 /* ============ Servir la app también desde acá ============
    Así, en vez de abrir index.html con doble clic (o desde una carpeta
@@ -219,7 +223,12 @@ app.use(express.json());
    entrar por la dirección del puente (http://IP:4000), aunque
    funcionaban bien abriendo index.html con doble clic (ahí el
    navegador los lee directo del disco, sin pasar por este server). */
-app.get('/', (req, res) => res.sendFile(path.join(__dirname, '..', 'index.html')));
+// index.html y los JS/CSS van comprimidos (gzip, ~4 veces menos): ver comprimir.js
+const indexComprimido = comprimir.estaticosComprimidos(path.join(__dirname, '..'), { setHeaders: r=>r.setHeader('Cache-Control', 'no-cache') });
+app.get('/', (req, res) => {
+  req.url = '/index.html';
+  indexComprimido(req, res, ()=>{ req.url = '/'; res.sendFile(path.join(__dirname, '..', 'index.html')); });
+});
 /* Caché del navegador para los archivos estáticos: index.html los pide
    con "?v=AAAAMMDDx" (y ese número se sube en cada actualización), así
    que una URL versionada nunca cambia de contenido — se puede guardar un
@@ -232,8 +241,9 @@ const estaticoOpts = {
     if(/[?&]v=/.test(res.req.originalUrl)) res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
   }
 };
-app.use('/css', express.static(path.join(__dirname, '..', 'css'), estaticoOpts));
-app.use('/js', express.static(path.join(__dirname, '..', 'js'), estaticoOpts));
+const conVersion = { setHeaders: r=>{ if(/[?&]v=/.test(r.req.originalUrl)) r.setHeader('Cache-Control', 'public, max-age=31536000, immutable'); } };
+app.use('/css', comprimir.estaticosComprimidos(path.join(__dirname, '..', 'css'), conVersion), express.static(path.join(__dirname, '..', 'css'), estaticoOpts));
+app.use('/js', comprimir.estaticosComprimidos(path.join(__dirname, '..', 'js'), conVersion), express.static(path.join(__dirname, '..', 'js'), estaticoOpts));
 app.use('/img', express.static(path.join(__dirname, '..', 'img'), estaticoOpts));
 
 // Clave opcional para hablarle al puente. Si completás API_TOKEN en tu
@@ -777,24 +787,30 @@ async function nombresDeComponentes(codmats){
   }
 }
 
+/* Rendimiento con 30 PCs: la lista de una misma versión se arma (regla de
+   papel / agrupado de mallas), se serializa y se comprime UNA vez y se
+   reparte a todas (cacheLista). Y la PC que ya tiene esa versión manda
+   ?version= y recibe solo {sinCambios} (unos bytes, en vez de ~1 MB). */
+const cacheLista = comprimir.cacheRespuesta(12);
 app.get('/api/ordenes-pendientes', exigirPermiso('ordenes'), async (req, res) => {
   try {
     const area = areaDe(req);
     const puedeForzar = !!req.usuarioObj.admin;
     const r = await fotoLista(area).obtener({ forzar: puedeForzar && req.query.forzar==='1' });
     const porCodmat = !!area.listaPorCodmat;
-    res.json({
+    // cambia con cada consulta a SQL, con cada aprobación (papel) y con cada
+    // movimiento de stock (mallas, tejidos): esas dos cambian la lista sin consultar SQL
+    const aprob = area.id==='papel' ? crypto.createHash('sha1').update([...aprobaciones.aprobados()].sort().join('|')).digest('base64url').slice(0, 10) : '';
+    const version = `${r.actualizado}.${(r.datos && r.datos.rev) || 0}.${aprob}.${porCodmat ? versionStockDeArea(area) : ''}`; // corta: viaja en ?version=
+    const cabecera = { actualizado: new Date(r.actualizado).toISOString(), proxima: new Date(r.proxima).toISOString(), version, aviso: r.aviso || null, puedeForzar };
+    if(req.query.version && req.query.version===version) return res.json({ sinCambios: true, ...cabecera });
+    const c = await cacheLista(`${area.id}|${version}|${puedeForzar}|${r.aviso || ''}`, ()=>({
       ordenes: area.id==='papel' ? clasificarPapel(r.datos).entran
              : porCodmat ? conTamano(area, reglasMallas.agrupar(r.datos.filas, r.datos.cal, stockDeArea(area)).filas)
              : r.datos,
-      actualizado: new Date(r.actualizado).toISOString(),
-      proxima: new Date(r.proxima).toISOString(),
-      // cambia con cada consulta a SQL, con cada aprobación (papel) y con cada
-      // movimiento de stock (mallas): esas dos cambian la lista sin consultar SQL
-      version: `${r.actualizado}.${(r.datos && r.datos.rev) || 0}.${area.id==='papel' ? [...aprobaciones.aprobados()].sort().join('|') : ''}.${porCodmat ? versionStockDeArea(area) : ''}`,
-      aviso: r.aviso || null,
-      puedeForzar
-    });
+      ...cabecera
+    }));
+    res.jsonCrudo(c.texto, c.gz);
   } catch (err) {
     responderError(res, 'ordenes-pendientes', err);
   }
@@ -972,15 +988,9 @@ app.post('/api/rack-simulado/:orden/salida', exigirPermiso('rack'), conArea((req
 app.get('/api/rack-simulado/:orden/ultima-salida', exigirPermiso('rack'), conArea((req, res, area) => {
   const { orden } = req.params;
   if(racks.leer(area).some(o=>o.Ordem_Serial === orden)) return res.json({ encontrada: false, motivo: 'la orden ya está en el rack ahora mismo' });
-  const historial = racks.leerHistorial(area);
-  // el historial solo crece: recorriendo desde el final, la primera
-  // 'salida' de esta orden es la más reciente
-  for(let i=historial.length-1; i>=0; i--){
-    const h = historial[i];
-    if(h.Ordem_Serial===orden && h.evento==='salida' && h.ubicacion){
-      return res.json({ encontrada: true, ubicacion: h.ubicacion, orden: h.orden||null, fecha: h.fecha });
-    }
-  }
+  // el historial solo crece: la primera 'salida' de esta orden desde el final es la más reciente
+  const h = racks.ultimaSalida(area, orden);
+  if(h) return res.json({ encontrada: true, ubicacion: h.ubicacion, orden: h.orden||null, fecha: h.fecha });
   res.json({ encontrada: false, motivo: 'no hay ninguna salida registrada para esa orden' });
 }));
 
@@ -1008,24 +1018,15 @@ app.post('/api/rack-simulado/reentrada', exigirPermiso('rack'), conArea((req, re
 /* Resumen del día: cuántas entraron y salieron del rack HOY. */
 app.get('/api/rack-resumen-dia', exigirPermiso('ordenes','rack'), conArea((req, res, area) => {
   if(racksPosiciones.has(area.id)){ // por posiciones (Tejidos): piezas que entraron / salieron hoy, y ocupadas
-    const e = racksPosiciones.get(area.id).estado();
-    return res.json({ entradasHoy: e.hoy.entra, salidasHoy: e.hoy.sale, enStock: e.posiciones.filter(p=>p.unidad).length });
+    const r = racksPosiciones.get(area.id).resumenDia(); // sin armar el rack entero: solo los contadores
+    return res.json({ entradasHoy: r.entra, salidasHoy: r.sale, enStock: r.ocupadas });
   }
   if(area.rack.tipo==='inventario'){ // por cantidad: unidades que entraron / salieron hoy, y stock
     const inv = inventario.consultar(area);
     return res.json({ entradasHoy: inv.hoy.entra, salidasHoy: inv.hoy.sale, enStock: inv.stock.reduce((s, x)=>s + x.cantidad, 0) });
   }
-  let cortadasHoy = 0, sacadasHoy = 0;
-  const historial = racks.leerHistorial(area);
-  // el historial está en orden de llegada: se recorre desde el final y se
-  // corta en el primer registro de otro día (antes se filtraba entero)
-  for(let i=historial.length-1; i>=0; i--){
-    const h = historial[i];
-    if(!esHoy(h.fecha)) break;
-    if(h.evento==='entrada') cortadasHoy++;
-    else if(h.evento==='salida') sacadasHoy++;
-  }
-  res.json({ cortadasHoy, sacadasHoy, enRackAhora: racks.leer(area).length });
+  const hoy = racks.resumenHoy(area); // contadores en memoria (ver racks.js)
+  res.json({ cortadasHoy: hoy.entradas, sacadasHoy: hoy.salidas, enRackAhora: racks.leer(area).length });
 }, false)); // también la piden las áreas sin rack de casillas (contesta ceros)
 
 /* ============ Inventario por material y medida (Tecoflex) ============
@@ -1033,6 +1034,13 @@ app.get('/api/rack-resumen-dia', exigirPermiso('ordenes','rack'), conArea((req, 
 app.get('/api/inventario', exigirPermiso('rack'), (req, res) => {
   try { res.json(inventario.consultar(areaDe(req), req.query.version)); }
   catch(e){ responderError(res, 'inventario', e); }
+});
+/* Consumo histórico por material y medida: lo que salió (y entró) en un período.
+   ?desde=AAAA-MM-DD&hasta=AAAA-MM-DD (opcionales). Sale de lo acumulado por día en
+   server/inventario.js, no de releer el diario. */
+app.get('/api/inventario/consumo', exigirPermiso('rack'), (req, res) => {
+  try { res.json(inventario.consumo(areaDe(req), { desde: req.query.desde, hasta: req.query.hasta })); }
+  catch(e){ responderError(res, 'inventario/consumo', e); }
 });
 /* Rack: entradas y salidas. En Mallas, quien trabaja en Lista de corte
    (permiso "ordenes") también puede dar ENTRADA a lo que fabricó — pero
@@ -1065,7 +1073,15 @@ function conRackPosiciones(fn){
     Promise.resolve().then(()=>fn(req, res, rp, area)).catch(e=>responderError(res, req.path, e));
   };
 }
-app.get('/api/tejidos/rack', exigirPermiso('rack','ordenes'), conRackPosiciones((req, res, rp)=>res.json(rp.estado())));
+/* El estado del rack se arma y se comprime una vez por firma (versión + día) para
+   todas las PCs; la que ya tiene esa firma manda ?version= y recibe solo {sinCambios}. */
+const cacheRackPosiciones = comprimir.cacheRespuesta(8);
+app.get('/api/tejidos/rack', exigirPermiso('rack','ordenes'), conRackPosiciones(async (req, res, rp, area)=>{
+  const firma = rp.firma();
+  if(req.query.version && req.query.version===firma) return res.json({ sinCambios: true, firma });
+  const c = await cacheRackPosiciones(area.id + '|' + firma, ()=>rp.estado());
+  res.jsonCrudo(c.texto, c.gz);
+}));
 // la foto llega cruda (ya achicada por el navegador): no pasa por el lector de JSON
 app.post('/api/tejidos/fotos', exigirPermiso('rack'), express.raw({ type: ()=>true, limit: '9mb' }),
   conRackPosiciones((req, res, rp)=>res.json({ ok: true, foto: rp.guardarFoto(req.body) })));
@@ -1243,6 +1259,38 @@ app.get('/api/dxf', exigirPermiso('ordenes'), async (req, res) => {
     res.json({ contenido });
   } catch (err) {
     responderError(res, 'dxf', err);
+  }
+});
+
+/* ============ DXF de una tira de Tecoflex, por medida ============
+   El nesting de Tecoflex es un pedido de tiras: cada medida (mm) tiene su
+   propio DXF ("CORTE 9MM UND.dxf": una tira de 9 mm de ancho por 3000 de
+   largo) en una carpeta de la red (TECOFLEX_DXF_CARPETA). La app manda solo
+   la MEDIDA; el nombre del archivo y la carpeta los arma el puente, así nadie
+   puede pedir otra ruta. Igual pasa por rutaDxfPermitida (DXF_ALLOWED_PREFIXES). */
+const TECOFLEX_DXF_CARPETA = (process.env.TECOFLEX_DXF_CARPETA || '\\\\192.168.2.2\\cnc-revisados\\OPTIMIZACION TECO').replace(/[\\/]+$/, '');
+app.get('/api/tecoflex/dxf', exigirPermiso('nesting'), async (req, res) => {
+  try {
+    const area = areaDe(req);
+    if(!area.nestingTiras) return res.status(400).json({ error: `${area.nombre} no arma el nesting por medida.` });
+    // "9", "9mm", "9 MM", "6.5" -> "9", "9", "9", "6,5"
+    const medida = String(req.query.medida==null ? '' : req.query.medida).trim().toUpperCase().replace(/\s*MM$/, '').replace('.', ',').replace(/^0+(?=\d)/, '');
+    if(!/^\d{1,3}(,\d{1,2})?$/.test(medida) || !(parseFloat(medida.replace(',', '.')) > 0)) return res.status(400).json({ error: 'Medida inválida: escribí un número en mm, por ejemplo 9 o 6,5.' });
+    // los decimales pueden estar escritos con coma o con punto en el nombre del archivo
+    const nombres = [...new Set([medida, medida.replace(',', '.')])].map(m=>area.nestingTiras.archivo.replace('{medida}', m));
+    for(const nombre of nombres){
+      const r = rutaDxfPermitida(TECOFLEX_DXF_CARPETA + '\\' + nombre);
+      if(r.error) return res.status(400).json({ error: r.error });
+      let st;
+      try { st = await fs.promises.stat(r.fullPath); }
+      catch(e){ if(e.code==='ENOENT' || e.code==='ENOTDIR') continue; throw e; }
+      if(!st.isFile()) continue;
+      if(st.size > DXF_MAX_BYTES) return res.status(413).json({ error: `el DXF pesa ${Math.round(st.size/1048576)} MB; el máximo es ${DXF_MAX_BYTES/1048576} MB` });
+      return res.json({ contenido: await fs.promises.readFile(r.fullPath, 'utf8'), archivo: nombre, medida });
+    }
+    res.status(404).json({ error: `No existe el archivo "${nombres[0]}" en la carpeta de cortes de Tecoflex.`, archivo: nombres[0] });
+  } catch (err) {
+    responderError(res, 'tecoflex/dxf', err);
   }
 });
 

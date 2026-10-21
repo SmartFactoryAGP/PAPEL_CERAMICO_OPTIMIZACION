@@ -108,6 +108,7 @@ function invAplicarResultado(r){
   if(r.hoy) invHoy = r.hoy;
   invVersion = r.version;
   invDibujarTodo();
+  if(typeof invConsAlCambiar==='function') invConsAlCambiar(); // la vista de consumo (js/ui/inventario-vistas.js) se rehace sola
 }
 function invDibujarTodo(){
   invDibujarMateriales();
@@ -116,6 +117,7 @@ function invDibujarTodo(){
   invDibujarMatriz();
   invDibujarMovimientos();
   invDibujarKpis();
+  if(typeof invVistasAlDibujar==='function') invVistasAlDibujar(); // pestañas del rack (inventario-vistas.js)
 }
 
 /* ---------- formulario: selección MASIVA ----------
@@ -265,6 +267,7 @@ function invDibujarCarrito(){
   const lista = document.getElementById('invCartList');
   const btn = document.getElementById('invConfirmarBtn');
   document.getElementById('invCartCount').textContent = invCarrito.length;
+  if(typeof invVistasActualizarBadge==='function') invVistasActualizarBadge(); // número en la pestaña "Registrar" (pantallas chicas)
   document.getElementById('invVaciarBtn').hidden = !invCarrito.length;
   if(!invCarrito.length){
     lista.innerHTML = '<div class="cartEmpty">El carrito está vacío. Elegí material, medida y cantidad, y tocá "Agregar".</div>';

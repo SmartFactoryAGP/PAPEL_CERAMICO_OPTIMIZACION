@@ -1061,3 +1061,87 @@ body[data-area="tejidos"] .loginBrand::after{
     repeating-linear-gradient(0deg, rgba(242,139,196,.20) 0 2px, transparent 2px 22px),
     repeating-linear-gradient(90deg, rgba(242,139,196,.12) 0 1px, transparent 1px 22px);
 }
+/* ---------- Nesting de Tecoflex: pedido de tiras por medida ---------- */
+.tnPedido{ display:flex; flex-direction:column; gap:10px; padding:14px; border-radius:14px; background:var(--area-soft); border:1px solid color-mix(in srgb, var(--area) 28%, transparent) }
+.tnPedido[hidden]{ display:none }
+.tnPedido select{ width:100% }
+.tnPlancha{ font-size:12.5px; color:var(--ink2); line-height:1.5 }
+.tnPlancha b{ color:var(--ink) }
+.tnSolo{ color:var(--warn); font-weight:700 }
+.tnArchivo{ margin:-2px 0 0; min-height:1.4em; font-family:var(--font-mono); font-size:11.5px; overflow-wrap:anywhere }
+#tnAgregar{ width:100% }
+#tnMsg{ margin:0; font-weight:600; min-height:1.2em; overflow-wrap:anywhere }
+#tnMsg.tnOk{ color:var(--good) }
+#tnMsg.tnAvisoTxt{ color:var(--warn) }
+.controls input[readonly]{ background:var(--bg2); color:var(--muted); cursor:not-allowed }
+@media (max-width: 900px){
+  .tnPedido input, .tnPedido select{ min-height:46px; font-size:16px } /* 16px: el celular no hace zoom al escribir */
+  #tnAgregar{ min-height:50px; font-size:16px }
+}
+
+/* ---------- Rack de Tecoflex: vistas (Registrar · Existencias · Consumo · Movimientos) ---------- */
+.invTabs{ display:flex; gap:2px; padding:3px; border-radius:11px; background:var(--bg2); border:1px solid var(--line-soft); align-self:flex-start; max-width:100% }
+.invTab{ flex:0 0 auto; display:inline-flex; align-items:center; justify-content:center; padding:7px 16px; border-radius:8px; border:0; background:transparent; color:var(--muted); font:700 12.5px var(--font-ui); box-shadow:none; width:auto; white-space:nowrap }
+.invTab:hover{ background:#fff; color:var(--ink); box-shadow:none }
+.invTab.active{ background:#fff; color:var(--area-ink); box-shadow:var(--shadow-1) }
+.invTabBadge{ margin-left:6px; min-width:18px; padding:1px 6px; border-radius:999px; background:var(--area); color:#fff; font:800 10.5px var(--font-ui); text-align:center }
+.invTabBadge[hidden]{ display:none }
+.invTabRegistrar{ display:none }          /* solo en pantallas chicas: ahí el formulario es una vista más */
+.invVista{ display:flex; flex-direction:column; gap:10px; flex:1 1 auto; min-height:0 }
+.invVista[hidden]{ display:none }
+.invStage .invVista .invMovsWrap{ flex:1 1 auto; max-height:none; min-height:220px }
+/* consumo: la misma tabla, con las salidas en rojo y −cantidad */
+.invConsFiltros{ display:flex; flex-wrap:wrap; gap:10px 16px; align-items:center }
+.invConsFiltros select{ height:36px; padding:0 10px; border-radius:9px; border:1px solid var(--line); background:#fff; font:600 13px var(--font-ui) }
+.invConsFiltros .excelBtn{ margin-left:auto }
+.invConsResumen{ display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:10px }
+.invConsResumen .stat b{ font-size:24px; overflow-wrap:anywhere }
+.invConsResumen .stat b.invMejor{ font-size:15px; line-height:1.25 }
+.invConsResumen .invMejor small{ font:800 15px var(--font-mono); margin-left:4px }
+.invNeg{ color:var(--warn) !important }
+.invConsTabla td.invCons{ font:700 13px var(--font-mono); text-align:center }
+.invConsTabla td.invCons b{ display:block; font:800 14px var(--font-mono); color:var(--warn) }
+.invConsTabla td.conConsumo{ background:color-mix(in srgb, var(--warn) var(--p, 10%), #fff) }  /* más consumo = más rojo */
+.invConsTabla td.sinConsumo{ color:var(--line-strong); font-weight:400 }
+
+/* celular y tablet: una sola columna. Arriba las vistas (y sus pestañas); "Registrar" es una vista más */
+@media (max-width: 1100px){
+  body[data-area="tecoflex"] #viewRack{ flex-direction:column; overflow-y:auto; overflow-x:hidden }
+  body[data-area="tecoflex"] #viewRack > .panel{ flex:0 0 auto; width:auto; min-width:0; overflow:visible }
+  body[data-area="tecoflex"] #viewRack > .invStage{ order:1 }
+  body[data-area="tecoflex"] #viewRack > .invControls{ order:2 }
+  body[data-area="tecoflex"] #viewRack:not([data-inv-tab="registrar"]) > .invControls{ display:none }
+  .invTabRegistrar{ display:inline-flex }
+  .invTabs{ width:100%; align-self:stretch }
+  .invTab{ flex:1 1 0; min-height:44px; padding:8px 4px; font-size:13px }
+  body[data-area="tecoflex"] .invStage .invMatrizWrap, body[data-area="tecoflex"] .invStage .invMovsWrap{ max-height:none; min-height:0; overflow-x:auto }
+  body[data-area="tecoflex"] .invStage .invMatrizWrap{ flex:0 0 auto }
+  .invCell, .invConsTabla td.invCons{ min-width:54px }
+  .invTable th, .invTable td{ padding:11px 10px }
+}
+@media (max-width: 720px){
+  .invConsResumen{ grid-template-columns:1fr }
+  .invConsResumen .stat{ flex-direction:row; align-items:baseline; justify-content:space-between }
+  .invConsFiltros select{ flex:1 1 100%; height:44px; font-size:16px }
+  .invConsFiltros .excelBtn{ margin-left:0 }
+  .medGrid{ grid-template-columns:repeat(auto-fill, minmax(54px, 1fr)) }
+  .invControls input, .invControls select{ min-height:46px; font-size:16px } /* 16px: el celular no hace zoom al escribir */
+  #invAgregarBtn, #invConfirmarBtn{ min-height:50px; font-size:16px }
+  .invStage .kpiRow.kpi3{ gap:6px }
+  .invStage .kpiRow.kpi3 .stat.big{ padding:10px 8px }
+  .invStage .kpiRow.kpi3 .stat.big b{ font-size:20px }
+  .invStage .kpiRow.kpi3 .stat.big span{ font-size:9.5px }
+}
+@media (max-width: 720px){
+  .invTabs{ gap:0; padding:2px }
+  .invTab{ min-width:0; padding:8px 2px; font-size:12px; overflow:hidden; text-overflow:ellipsis }
+  .invTabBadge{ margin-left:4px; padding:0 5px }
+  .invConsResumen{ gap:6px }
+  .invConsResumen .stat.big{ min-height:0; padding:9px 14px }
+  .invConsResumen .stat.big::after{ display:none }
+  .invConsResumen .stat b{ font-size:20px }
+}
+.invAyuda{ display:flex; flex-direction:column; gap:10px }
+@media (max-width: 720px){
+  .invAyuda{ display:none }   /* la ayuda larga y la leyenda solo en pantallas grandes: en el celular la tabla va primero */
+}

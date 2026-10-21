@@ -51,8 +51,11 @@ async function tjRender(silencioso){
   if(tjArea().rack.tipo!=='posiciones') return;
   const area = areaActualId;
   try {
-    const e = await tjPedir('GET', '/rack');
-    if(area!==areaActualId) return;
+    // refresco automático con el rack ya en pantalla: se manda la firma que se tiene y,
+    // si nada cambió, el puente contesta {sinCambios} en vez del rack entero (~90 KB)
+    const q = silencioso && tjEstado && tjEstado.firma ? '?version=' + encodeURIComponent(tjEstado.firma) : '';
+    const e = await tjPedir('GET', '/rack' + q);
+    if(area!==areaActualId || e.sinCambios) return;
     tjEstado = e;
   } catch(err){
     if(!silencioso) document.getElementById('tjMapa').innerHTML = `<div class="empty">No se pudo traer el rack: ${escapeHtml(err.message)}</div>`;

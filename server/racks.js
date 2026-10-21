@@ -2,12 +2,13 @@
    RACKS DE CASILLAS (papel cerámico, mallas) — una orden por casilla
    =========================================================
    Almacenamiento: server/datos/<área>/rack.json (estado actual) y
-   server/datos/<área>/historial.json (entradas / salidas / reentradas,
-   solo crece). Todo el acceso a esos archivos pasa por acá: el día que
+   server/datos/<área>/historial.jsonl (entradas / salidas / reentradas,
+   una línea por evento, solo crece). Todo el acceso a esos archivos pasa por acá: el día que
    los racks vivan en SQL, se reemplaza este módulo y los endpoints de
    server.js no cambian. */
+const fs = require('fs');
 const { leerListaJson, escribirListaJson } = require('./archivos');
-const { errorHttp } = require('./comun');
+const { errorHttp, esHoy } = require('./comun');
 
 const MAX_CAMPOS = 60, MAX_LARGO_CLAVE = 64, MAX_LARGO_VALOR = 2000, MAX_LARGO_SERIAL = 64;
 
@@ -21,22 +22,84 @@ function crear({ datos, notificar }){
     notificar({ tipo:'rack', area: area.id }); // las demás PCs refrescan su Rack al instante
   }
 
-  const leerHistorial = area => leerListaJson(rutaHistorial(area));
-  /* El rack es lo que manda: si el historial no se puede leer, se avisa en
-     consola y se saltea ESTE registro, sin pisar el archivo dañado (se
-     puede recuperar a mano) y sin hacer fallar la operación sobre el rack,
-     que ya quedó guardada. */
+  /* Historial: una línea por evento (historial.jsonl), que solo se AGREGA.
+     Antes era un arreglo JSON que se reescribía entero en cada entrada o
+     salida: con un año de uso (~70.000 eventos, ~28 MB) cada movimiento
+     tardaba ~0,5 s y trababa al puente para todas las PCs. */
+  /* Recorre el historial DESDE EL FINAL, de a bloques de 64 KB, hasta que `cada`
+     devuelva false: para lo de hoy o lo último de una orden no hace falta leer
+     (ni tener en memoria) el año entero. */
+  function desdeElFinal(area, cada){
+    const r = rutaHistorial(area);
+    if(!fs.existsSync(r)) return;
+    const fd = fs.openSync(r, 'r');
+    try {
+      let pos = fs.fstatSync(fd).size, resto = Buffer.alloc(0);
+      const BLOQUE = 65536;
+      while(pos > 0){
+        const n = Math.min(BLOQUE, pos); pos -= n;
+        const buf = Buffer.alloc(n); fs.readSync(fd, buf, 0, n, pos);
+        const todo = Buffer.concat([buf, resto]);
+        // la primera línea del bloque puede estar cortada: queda para la vuelta siguiente
+        const corte = pos > 0 ? todo.indexOf(10) : -1;
+        resto = corte >= 0 ? todo.subarray(0, corte) : Buffer.alloc(0);
+        const lineas = todo.subarray(corte + 1).toString('utf8').split('\n');
+        for(let i=lineas.length-1; i>=0; i--){ if(lineas[i].trim() && cada(lineas[i])===false) return; }
+      }
+      if(resto.length){ const l = resto.toString('utf8'); if(l.trim()) cada(l); }
+    } finally { fs.closeSync(fd); }
+  }
+  const parsear = t => { try { return JSON.parse(t); } catch(e){ return null; } }; // una línea cortada por un apagón se saltea
+  /* Cuántas entraron y salieron HOY, llevado en memoria: se cuenta una vez desde
+     el final del archivo (hasta el primer evento de otro día) y después se suma en cada evento. */
+  const hoyPorArea = new Map(); // área -> {dia, entradas, salidas}
+  const diaHoy = () => { const d = new Date(); return `${d.getFullYear()}-${d.getMonth()+1}-${d.getDate()}`; };
+  function resumenHoy(area){
+    const dia = diaHoy();
+    let c = hoyPorArea.get(area.id);
+    if(!c){
+      c = { dia, entradas: 0, salidas: 0 };
+      desdeElFinal(area, t=>{
+        const h = parsear(t); if(!h) return true;
+        if(!esHoy(h.fecha)) return false;
+        if(h.evento==='entrada') c.entradas++; else if(h.evento==='salida') c.salidas++;
+        return true;
+      });
+      hoyPorArea.set(area.id, c);
+    } else if(c.dia !== dia){ c.dia = dia; c.entradas = 0; c.salidas = 0; } // pasó la medianoche
+    return { entradas: c.entradas, salidas: c.salidas };
+  }
+  /* La última salida de una orden (para la "reentrada"): desde el final,
+     parseando solo las líneas que nombran esa orden. */
+  function ultimaSalida(area, orden){
+    const aguja = '"Ordem_Serial":' + JSON.stringify(String(orden));
+    let encontrada = null;
+    desdeElFinal(area, t=>{
+      if(!t.includes(aguja)) return true;
+      const h = parsear(t);
+      if(h && h.Ordem_Serial===orden && h.evento==='salida' && h.ubicacion){ encontrada = h; return false; }
+      return true;
+    });
+    return encontrada;
+  }
+  /* El rack es lo que manda: si el historial no se puede escribir, se avisa en
+     consola y se saltea ESTE registro, sin hacer fallar la operación sobre el
+     rack, que ya quedó guardada. */
   function agregarAlHistorial(area, entrada){
     try {
-      const historial = leerHistorial(area);
-      historial.push({ ...entrada, fecha: new Date().toISOString() });
-      escribirListaJson(rutaHistorial(area), historial);
+      const h = { ...entrada, fecha: new Date().toISOString() };
+      fs.appendFileSync(rutaHistorial(area), JSON.stringify(h) + '\n', 'utf8');
+      const c = hoyPorArea.get(area.id);
+      if(c){
+        if(c.dia !== diaHoy()){ c.dia = diaHoy(); c.entradas = 0; c.salidas = 0; }
+        if(h.evento==='entrada') c.entradas++; else if(h.evento==='salida') c.salidas++;
+      }
     } catch(err){
       console.error('[historial] no se registró el evento:', err.message, entrada);
     }
   }
 
-  return { leer, guardar, leerHistorial, agregarAlHistorial };
+  return { leer, guardar, resumenHoy, ultimaSalida, agregarAlHistorial };
 }
 
 /* Los endpoints de rack por órdenes son solo para racks de casillas;

@@ -9,6 +9,8 @@ document.getElementById('stopBtn').addEventListener('click', ()=>{
 });
 
 function runNest(){
+  // Tecoflex: pedido de tiras por medida, con su propio cálculo exacto (js/ui/tecoflex-nesting.js)
+  if(typeof tnUsaPlanDeTiras==='function' && tnUsaPlanDeTiras()){ tnEjecutar(); return; }
   const btn = document.getElementById('runBtn');
   const stopBtn = document.getElementById('stopBtn');
   btn.disabled=true; btn.textContent='Calculando...';

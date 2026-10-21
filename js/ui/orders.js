@@ -155,12 +155,16 @@ async function ordRefrescar(opciones){
     status.textContent = forzar ? 'Consultando SQL...' : 'Cargando la lista...';
   }
   try {
-    const res = await fetch(ordBridgeUrl()+'/api/ordenes-pendientes'+(forzar ? '?forzar=1' : ''), {headers: ordApiHeaders()});
+    // automática y ya con la lista de esta área: se manda la versión que se tiene y, si
+    // no cambió, el puente contesta {sinCambios} (unos bytes en vez de la lista entera)
+    const yaLaTengo = auto && ordUltimaLista.area===areaActualId && ordUltimaLista.version;
+    const q = forzar ? '?forzar=1' : yaLaTengo ? '?version='+encodeURIComponent(ordUltimaLista.version) : '';
+    const res = await fetch(ordBridgeUrl()+'/api/ordenes-pendientes'+q, {headers: ordApiHeaders()});
     if(!res.ok) throw await ordErrorDeRespuesta(res);
     const data = await res.json();
     ordProgramarAuto(data.proxima);
     // automática y sin cambios: no se toca nada de la pantalla
-    if(auto && ordUltimaLista.area===areaActualId && ordUltimaLista.version===data.version) return;
+    if(data.sinCambios || (auto && ordUltimaLista.area===areaActualId && ordUltimaLista.version===data.version)) return;
     const otraArea = ordUltimaLista.area !== areaActualId;
     ordUltimaLista = { area: areaActualId, actualizado: data.actualizado, version: data.version };
     let pendientes = data.ordenes || [];

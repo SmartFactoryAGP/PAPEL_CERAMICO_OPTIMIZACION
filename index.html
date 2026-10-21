@@ -10,7 +10,7 @@
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Manrope:wght@600;700;800&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;700&display=swap">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
-<link rel="stylesheet" href="css/styles.css?v=20261020i">
+<link rel="stylesheet" href="css/styles.css?v=20261021g">
 </head>
 <body data-area="papel">
 
@@ -110,11 +110,24 @@
 <div class="layout" id="viewNesting" style="display:none">
   <div class="panel controls">
 
-    <div class="dropzone" id="dropzone">
+    <div class="dropzone" id="dropzone" data-areas="papel">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4M7 9l5-5 5 5"/><path d="M4 16v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/></svg>
       <b>Cargar archivos DXF</b><span>clic o arrastrá acá (.dxf)</span>
     </div>
     <input type="file" id="fileInput" accept=".dxf,.DXF" multiple>
+
+    <!-- Tecoflex: el nesting es un PEDIDO de tiras (medida + cantidad); ver js/ui/tecoflex-nesting.js -->
+    <div class="tnPedido" id="tnPedido" data-areas="tecoflex" hidden>
+      <div class="field"><label for="tnMaterial">Material</label><select id="tnMaterial"></select></div>
+      <div class="tnPlancha" id="tnPlancha"></div>
+      <div class="row2">
+        <div class="field"><label for="tnMedida">Medida (mm)</label><input type="text" id="tnMedida" inputmode="decimal" autocomplete="off" placeholder="ej. 9" maxlength="8"></div>
+        <div class="field"><label for="tnCantidad">Cantidad</label><input type="number" id="tnCantidad" inputmode="numeric" min="1" max="9999" step="1" placeholder="ej. 40"></div>
+      </div>
+      <div class="hint tnArchivo" id="tnArchivo">&nbsp;</div>
+      <button type="button" id="tnAgregar">Agregar al pedido</button>
+      <div class="hint" id="tnMsg" role="status"></div>
+    </div>
 
     <div id="pieceTableWrap">
       <div class="empty" id="emptyMsg">Aún no has cargado piezas.</div>
@@ -130,7 +143,7 @@
     </div>
     <div class="field"><label for="kerf">Separación piezas (mm)</label><input type="number" id="kerf" value="1" min="0" max="50" step="0.5"></div>
 
-    <fieldset>
+    <fieldset data-areas="papel">
       <legend>Motor de nesting</legend>
       <div class="hint" style="margin-top:0">La rotación de cada pieza la decide el <b>propio sistema</b>: prueba varias resoluciones de giro y se queda con la que da mejor aprovechamiento.</div>
       <label class="chk"><input type="checkbox" id="allowMirror" checked> Permitir espejar piezas (flip X)</label>
@@ -144,7 +157,7 @@
       <label class="chk" hidden><input type="checkbox" id="fineRotation" checked> Rotación fina (cada 2°)</label>
     </fieldset>
 
-    <fieldset>
+    <fieldset data-areas="papel">
       <legend>Tiras de relleno automáticas</legend>
       <label class="chk"><input type="checkbox" id="fillStrips" checked> Generar tiras con el sobrante</label>
       <div class="hint">Se calculan cuando tocás <b>"Detener y usar este resultado"</b> (o al terminar). Nunca alargan el corte: si no cabe, no se agrega nada.</div>
@@ -161,7 +174,7 @@
     </div>
 
     <button id="runBtn">Ejecutar nesting</button>
-    <div class="hint" id="workerStatus" style="margin-top:-6px">Comprobando si el cálculo puede correr en paralelo...</div>
+    <div class="hint" id="workerStatus" data-areas="papel" style="margin-top:-6px">Comprobando si el cálculo puede correr en paralelo...</div>
     <div class="exportrow">
       <button class="secondary" id="stopBtn" style="display:none;flex:1">Detener y usar este resultado</button>
       <button class="secondary" id="reopenLogBtn" style="display:none;flex:1">Ver historial de intentos</button>
@@ -637,26 +650,59 @@
       <div class="hint" id="invStatus">&nbsp;</div>
     </section>
   </div>
-  <div class="panel stagepanel" data-areas="tecoflex">
+  <div class="panel stagepanel invStage" data-areas="tecoflex">
     <div class="kpiRow kpi3">
       <div class="stat big"><span>Unidades en stock</span><b id="invKpiTotal">—</b></div>
       <div class="stat big"><span>Medidas con stock</span><b id="invKpiComb">—</b></div>
       <div class="stat big"><span>Hoy salen / entran</span><b id="invKpiHoy">—</b></div>
     </div>
-    <div class="panelHead">
-      <h3>Existencias</h3>
-      <label class="chk" style="margin:0"><input type="checkbox" id="invSoloConStock" checked> Solo medidas con stock</label>
+    <!-- vistas del rack: en pantallas chicas "Registrar" es el formulario con el carrito (ver js/ui/inventario-vistas.js) -->
+    <div class="invTabs" role="tablist" aria-label="Vista del rack">
+      <button type="button" role="tab" class="invTab invTabRegistrar" data-tab="registrar" aria-selected="false">Registrar<span class="invTabBadge" id="invTabBadge" hidden>0</span></button>
+      <button type="button" role="tab" class="invTab active" data-tab="existencias" aria-selected="true">Existencias</button>
+      <button type="button" role="tab" class="invTab" data-tab="consumo" aria-selected="false">Consumo</button>
+      <button type="button" role="tab" class="invTab" data-tab="movimientos" aria-selected="false">Movimientos</button>
     </div>
-    <div class="hint" style="margin-top:-6px">Tocá una celda para elegirla · <b>arrastrá</b> (o Shift+clic) para elegir un bloque · Ctrl+clic suma · tocá el nombre de un material o una medida para elegirla entera.</div>
-    <div class="invLeyenda" aria-label="Cómo leer la tabla">
-      <span><b class="lgNum">11</b> stock real ahora</span>
-      <span><b class="lgPend entra">entra 11 → 22</b><b class="lgPend sale">sale 4 → 7</b> en tu carrito, sin registrar todavía · → cómo quedaría</span>
-      <span><i class="lgSel"></i> elegida para agregar</span>
-      <span><b class="lgNa">—</b> ese material no tiene esa medida</span>
+
+    <div class="invVista" data-tab="existencias">
+      <div class="panelHead">
+        <h3>Existencias</h3>
+        <label class="chk" style="margin:0"><input type="checkbox" id="invSoloConStock" checked> Solo medidas con stock</label>
+      </div>
+      <div class="invAyuda">
+      <div class="hint" style="margin-top:-6px">Tocá una celda para elegirla · <b>arrastrá</b> (o Shift+clic) para elegir un bloque · Ctrl+clic suma · tocá el nombre de un material o una medida para elegirla entera.</div>
+      <div class="invLeyenda" aria-label="Cómo leer la tabla">
+        <span><b class="lgNum">11</b> stock real ahora</span>
+        <span><b class="lgPend entra">entra 11 → 22</b><b class="lgPend sale">sale 4 → 7</b> en tu carrito, sin registrar todavía · → cómo quedaría</span>
+        <span><i class="lgSel"></i> elegida para agregar</span>
+        <span><b class="lgNa">—</b> ese material no tiene esa medida</span>
+      </div>
+      </div>
+      <div class="tableWrap invMatrizWrap" id="invMatriz"><div class="empty">Cargando el inventario...</div></div>
     </div>
-    <div class="tableWrap invMatrizWrap" id="invMatriz"><div class="empty">Cargando el inventario...</div></div>
-    <div class="panelHead"><h3>Movimientos recientes</h3></div>
-    <div class="tableWrap invMovsWrap" id="invMovs"><div class="empty">—</div></div>
+
+    <!-- consumo histórico: lo que SALIÓ de cada material y medida, con − y la cantidad -->
+    <div class="invVista" data-tab="consumo" hidden>
+      <div class="invConsFiltros">
+        <select id="invConsPeriodo" aria-label="Período">
+          <option value="1">Hoy</option><option value="7">Últimos 7 días</option><option value="30" selected>Últimos 30 días</option>
+          <option value="90">Últimos 90 días</option><option value="anio">Este año</option><option value="todo">Todo el historial</option>
+        </select>
+        <label class="chk" style="margin:0"><input type="checkbox" id="invConsSolo" checked> Solo medidas con consumo</label>
+        <button type="button" class="excelBtn" id="invConsExcel" title="Descargar en Excel el consumo del período">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="3" width="20" height="18" rx="3.5" fill="#107C41"/><path d="M8 8l8 8M16 8l-8 8" stroke="#fff" stroke-width="2.4" stroke-linecap="round"/></svg>
+          <span>Excel</span>
+        </button>
+      </div>
+      <div class="invConsResumen" id="invConsResumen"></div>
+      <div class="hint" id="invConsHint" style="margin-top:0">&nbsp;</div>
+      <div class="tableWrap invMatrizWrap" id="invConsMatriz"><div class="empty">Cargando el consumo...</div></div>
+    </div>
+
+    <div class="invVista" data-tab="movimientos" hidden>
+      <div class="panelHead"><h3>Movimientos recientes</h3><span class="hint">Los últimos 300 · para ver más atrás, usá Consumo</span></div>
+      <div class="tableWrap invMovsWrap" id="invMovs"><div class="empty">—</div></div>
+    </div>
   </div>
 </div>
 
@@ -766,55 +812,57 @@
 </div>
 
 <!-- ===== núcleo geométrico (sin dependencias del resto) ===== -->
-<script src="js/core/geometry.js?v=20261020i"></script>
-<script src="js/core/polygon.js?v=20261020i"></script>
-<script src="js/core/transform.js?v=20261020i"></script>
-<script src="js/core/areas-config.js?v=20261020i"></script>
+<script src="js/core/geometry.js?v=20261021g"></script>
+<script src="js/core/polygon.js?v=20261021g"></script>
+<script src="js/core/transform.js?v=20261021g"></script>
+<script src="js/core/areas-config.js?v=20261021g"></script>
 
 <!-- ===== lectura y reparación de DXF ===== -->
-<script src="js/dxf/parser.js?v=20261020i"></script>
-<script src="js/dxf/repair.js?v=20261020i"></script>
+<script src="js/dxf/parser.js?v=20261021g"></script>
+<script src="js/dxf/repair.js?v=20261021g"></script>
 
 <!-- ===== motor de nesting ===== -->
-<script src="js/nesting/orientation.js?v=20261020i"></script>
-<script src="js/nesting/placement.js?v=20261020i"></script>
-<script src="js/nesting/scoring.js?v=20261020i"></script>
-<script src="js/nesting/optimization.js?v=20261020i"></script>
+<script src="js/nesting/orientation.js?v=20261021g"></script>
+<script src="js/nesting/placement.js?v=20261021g"></script>
+<script src="js/nesting/scoring.js?v=20261021g"></script>
+<script src="js/nesting/optimization.js?v=20261021g"></script>
 
 <!-- ===== puente al Web Worker real (Bloque 3) ===== -->
-<script src="js/nesting/worker-bridge.js?v=20261020i"></script>
+<script src="js/nesting/worker-bridge.js?v=20261021g"></script>
 
 <!-- ===== tiras de relleno automáticas ===== -->
-<script src="js/strips/strips.js?v=20261020i"></script>
+<script src="js/strips/strips.js?v=20261021g"></script>
 
 <!-- ===== interfaz ===== -->
-<script src="js/ui/html.js?v=20261020i"></script>
-<script src="js/ui/areas.js?v=20261020i"></script>
-<script src="js/ui/pieces.js?v=20261020i"></script>
-<script src="js/ui/render.js?v=20261020i"></script>
-<script src="js/ui/history.js?v=20261020i"></script>
-<script src="js/ui/repair.js?v=20261020i"></script>
+<script src="js/ui/html.js?v=20261021g"></script>
+<script src="js/ui/areas.js?v=20261021g"></script>
+<script src="js/ui/pieces.js?v=20261021g"></script>
+<script src="js/ui/render.js?v=20261021g"></script>
+<script src="js/ui/history.js?v=20261021g"></script>
+<script src="js/ui/repair.js?v=20261021g"></script>
 
 <!-- ===== orquestación del motor (une UI + nesting) ===== -->
-<script src="js/nesting/engine.js?v=20261020i"></script>
+<script src="js/nesting/engine.js?v=20261021g"></script>
 
 <!-- ===== exportación ===== -->
-<script src="js/export/dxf.js?v=20261020i"></script>
-<script src="js/export/zip.js?v=20261020i"></script>
-<script src="js/export/pdf.js?v=20261020i"></script>
-<script src="js/export/stickers.js?v=20261020i"></script>
-<script src="js/export/excel.js?v=20261020i"></script>
+<script src="js/export/dxf.js?v=20261021g"></script>
+<script src="js/export/zip.js?v=20261021g"></script>
+<script src="js/export/pdf.js?v=20261021g"></script>
+<script src="js/export/stickers.js?v=20261021g"></script>
+<script src="js/export/excel.js?v=20261021g"></script>
 
 <!-- ===== arranque de la app (áreas, pestañas, sesión) ===== -->
-<script src="js/ui/orders.js?v=20261020i"></script>
-<script src="js/ui/inventario.js?v=20261020i"></script>
-<script src="js/ui/mallas.js?v=20261020i"></script>
-<script src="js/ui/tejidos.js?v=20261020i"></script>
-<script src="js/ui/tiempo-real.js?v=20261020i"></script>
-<script src="js/ui/auth.js?v=20261020i"></script>
-<script src="js/ui/usuarios.js?v=20261020i"></script>
-<script src="js/ui/aprobaciones.js?v=20261020i"></script>
-<script src="js/app.js?v=20261020i"></script>
+<script src="js/ui/orders.js?v=20261021g"></script>
+<script src="js/ui/inventario.js?v=20261021g"></script>
+<script src="js/ui/mallas.js?v=20261021g"></script>
+<script src="js/ui/tejidos.js?v=20261021g"></script>
+<script src="js/ui/inventario-vistas.js?v=20261021g"></script>
+<script src="js/ui/tecoflex-nesting.js?v=20261021g"></script>
+<script src="js/ui/tiempo-real.js?v=20261021g"></script>
+<script src="js/ui/auth.js?v=20261021g"></script>
+<script src="js/ui/usuarios.js?v=20261021g"></script>
+<script src="js/ui/aprobaciones.js?v=20261021g"></script>
+<script src="js/app.js?v=20261021g"></script>
 
 <!-- Aviso de seguridad: si el CSS o el JS no llegaron a cargar (por ej.
      si abriste este archivo haciendo doble clic ADENTRO de un .zip sin

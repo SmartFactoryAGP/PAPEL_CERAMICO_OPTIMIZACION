@@ -55,18 +55,24 @@
         stickers: false,   // pedido explícito: Tecoflex no usa sticker
         rackSql: false,
         rack: { tipo: 'inventario', unidad: 'mm' },
+        // Nesting de Tecoflex = un PEDIDO de tiras: por cada medida (mm) y cantidad se
+        // trae el DXF de una tira de esa medida de ancho por `largo` mm de largo (la
+        // plancha mide siempre 3000 de largo; el ancho depende del material, ver
+        // `ancho` abajo) y se calcula cuántas planchas hacen falta. `archivo` es el nombre
+        // del DXF de cada medida; la carpeta está en el puente (TECOFLEX_DXF_CARPETA).
+        nestingTiras: { largo: 3000, archivo: 'CORTE {medida}MM UND.dxf' },
         // id = código de material SAP (fijo y único: es la llave del stock)
         materiales: [
           // 100004045 es el de X5: solo estas medidas (pedido explícito)
           // "corto" es lo que se ve en tablas y carrito, donde no entra el nombre entero
-          { id:'100004045', codigo:'100004045', nombre:'Tecoflex Rombos 1,27',   corto:'Teco Rombos 1,27 (X5)', medidas: ['6,5','12','16','20','21','28'] },
-          { id:'100003239', codigo:'100003239', nombre:'Tecoflex Liso L2',       corto:'Teco Liso L2',          medidas: medidas9a70 },
-          { id:'100003554', codigo:'100003554', nombre:'PU Tenflex 1,27 Rombos', corto:'PU 1,27 Rombos',        medidas: medidas9a70 },
-          { id:'100003550', codigo:'100003550', nombre:'PU Tenflex 1,91 Liso',   corto:'PU 1,91 Liso',          medidas: medidas9a70 },
-          { id:'100003577', codigo:'100003577', nombre:'PU Tenflex 1,91 Rombos', corto:'PU 1,91 Rombos',        medidas: medidas9a70 },
+          { id:'100004045', codigo:'100004045', nombre:'Tecoflex Rombos 1,27',   corto:'Teco Rombos 1,27 (X5)', medidas: ['6,5','12','16','20','21','28'], ancho: 1000, soloEstasMedidas: true },
+          { id:'100003239', codigo:'100003239', nombre:'Tecoflex Liso L2',       corto:'Teco Liso L2',          medidas: medidas9a70, ancho: 1400 },
+          { id:'100003554', codigo:'100003554', nombre:'PU Tenflex 1,27 Rombos', corto:'PU 1,27 Rombos',        medidas: medidas9a70, ancho: 1400 },
+          { id:'100003550', codigo:'100003550', nombre:'PU Tenflex 1,91 Liso',   corto:'PU 1,91 Liso',          medidas: medidas9a70, ancho: 1400 },
+          { id:'100003577', codigo:'100003577', nombre:'PU Tenflex 1,91 Rombos', corto:'PU 1,91 Rombos',        medidas: medidas9a70, ancho: 1400 },
           // alias: claves viejas de este mismo material (antes de usar el código
           // SAP, el PU se guardaba como 'pu'); el puente las traduce al cargar
-          { id:'100005343', codigo:'100005343', nombre:'PU',                     corto:'PU',                    medidas: medidas9a70, alias:['pu'] }
+          { id:'100005343', codigo:'100005343', nombre:'PU',                     corto:'PU',                    medidas: medidas9a70, ancho: 1500, alias:['pu'] }
         ]
       },
       mallas: {

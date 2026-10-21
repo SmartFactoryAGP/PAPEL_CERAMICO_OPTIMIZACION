@@ -33,3 +33,11 @@ Se pueden correr con el puente de producción encendido.
 
 Requisitos: Node.js, las dependencias del puente (`server/node_modules`)
 y Chrome o Edge instalado (solo para `navegador.js`).
+
+## Prueba de carga (a mano, no está en todas.js)
+
+```
+node tools/pruebas/carga.js
+```
+
+Arma una copia con un año de datos: 70.000 eventos en el historial de papel, 20.000 en el de tejidos y una Lista de corte de 3.000 órdenes con el SQL simulado. Después mide con 30 PCs pidiendo a la vez: tiempo de respuesta (mediana y p95), KB por pedido y memoria del puente. Sirve para comparar antes y después de un cambio. No toca los datos reales.

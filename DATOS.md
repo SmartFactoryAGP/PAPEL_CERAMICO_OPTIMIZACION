@@ -7,6 +7,7 @@
 | Órdenes pendientes de corte (papel cerámico) | SQL Server de SAGA (vista `SAGA_View_Ficha_Componentes_Colombia`) | **No.** La app solo lee |
 | Puesto de trabajo de cada orden | SQL Server de Calendario (`TCAL_CALENDARIO_COLOMBIA_DIRECT`) | **No.** La app solo lee |
 | Archivos DXF | Carpeta de red (`\\192.168.2.2\cnc-revisados\…`) | **No.** La app solo lee |
+| DXF de las tiras de Tecoflex (uno por medida: `CORTE 9MM UND.dxf`) | Carpeta de red `\\192.168.2.2\cnc-revisados\OPTIMIZACION TECO` (se cambia con `TECOFLEX_DXF_CARPETA` en el `.env`) | **No.** La app solo lee |
 | **Racks, inventario, historial y usuarios** | **PC del puente**, carpeta `server/datos/` | **Sí.** Es lo único que la app escribe |
 
 La app **no modifica ninguna tabla de SAP/SAGA ni de Calendario**.
@@ -19,7 +20,7 @@ server/datos/
 ├── papel/aprobaciones.json    ZFER CURVE 02–04 aprobados para Lista de corte, con quién pidió, quién aprobó y cuándo
 ├── papel/
 │   ├── rack.json              órdenes que están hoy en el rack (A1 … G20)
-│   └── historial.json         cada entrada, salida y reentrada, con usuario y hora
+│   └── historial.jsonl        cada entrada, salida y reentrada, con usuario y hora (una línea por evento, solo se agrega)
 ├── mallas/
 │   ├── movimientos.jsonl      diario de entradas y salidas por CodMat (fuente de verdad)
 │   └── inventario.json        stock actual por CodMat
@@ -44,6 +45,8 @@ server/datos/
   - Mallas se maneja **por cantidad y por CodMat**, con su propio stock: entra lo fabricado (un sticker por malla) y sale lo usado. Ese stock se descuenta de lo que pide la Lista de corte.
 - **Trazabilidad:** todo movimiento queda registrado con **quién** lo hizo y **cuándo**. Nadie puede usar la app sin usuario.
 - **Formato:** archivos de texto JSON, legibles con cualquier editor. Se pueden abrir para auditoría.
+- **Consumo de Tecoflex:** no tiene archivo propio: sale del diario `tecoflex/movimientos.jsonl` (cada salida queda ahí con fecha, material, medida y cantidad). Al arrancar, el puente lo suma por día, material y medida; la vista "Consumo" del Rack lo consulta de ahí. No se pierde nada ni hay que cargar datos aparte.
+- **Historiales:** una línea por evento (`.jsonl`) que solo se agrega al final; nunca se reescriben enteros. Con un año de uso, cada movimiento sigue tardando lo mismo que el primer día. El `historial.json` del formato anterior se convierte solo al arrancar el puente, y el original queda en `_anteriores/`.
 
 ## Respaldos y recuperación
 

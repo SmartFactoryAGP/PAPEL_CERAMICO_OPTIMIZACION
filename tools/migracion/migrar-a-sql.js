@@ -55,6 +55,15 @@ function leerJson(ruta, porDefecto){
   const t = fs.readFileSync(ruta, 'utf8');
   return t.trim() ? JSON.parse(t) : porDefecto;
 }
+/* Historial de un rack de casillas: historial.jsonl (una línea por evento) o,
+   si el puente todavía no lo convirtió, el historial.json viejo (un arreglo). */
+function leerHistorialCasillas(dir){
+  const jsonl = path.join(dir, 'historial.jsonl');
+  if(!fs.existsSync(jsonl)) return leerJson(path.join(dir, 'historial.json'), []);
+  return fs.readFileSync(jsonl, 'utf8').split('\n').filter(t=>t.trim()).map((t, i)=>{
+    try { return JSON.parse(t); } catch(e){ throw new Error(`${jsonl}: la línea ${i+1} está dañada`); }
+  });
+}
 /* Lee todo server/datos/ y lo deja listo para insertar, con totales y avisos. */
 function cargar(dirDatos){
   if(!fs.existsSync(dirDatos)) throw new Error(`No existe la carpeta de datos: ${dirDatos}`);
@@ -69,7 +78,7 @@ function cargar(dirDatos){
   AREAS_CASILLAS.forEach(area=>{
     const dir = path.join(dirDatos, area);
     const rutaRack = path.join(dir, 'rack.json');
-    const rack = leerJson(rutaRack, []), historial = leerJson(path.join(dir, 'historial.json'), []);
+    const rack = leerJson(rutaRack, []), historial = leerHistorialCasillas(dir);
     const mtime = fs.existsSync(rutaRack) ? fs.statSync(rutaRack).mtime.toISOString() : new Date().toISOString();
     const ubic = new Set();
     const filas = rack.map(o=>{
