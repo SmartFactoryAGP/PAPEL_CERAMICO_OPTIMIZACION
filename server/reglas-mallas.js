@@ -36,7 +36,10 @@ function unidades(v){
 /* filas: las de SAGA (Ordem_Serial, CodMat, Descricao, Cantidad=m2);
    calendario: orden -> {puesto, vehiculo}; stock: Map CodMat corto -> unidades.
    Devuelve { filas: [...por CodMat+puesto, ordenadas], totales: Map CodMat -> {necesidad, stock, falta} } */
-function agrupar(filas, calendario, stock){
+function agrupar(filas, calendario, stock, opciones){
+  // en SAGA hay órdenes mal configuradas que traen 1 UND de una referencia cuando en realidad llevan un
+  // juego (2 UND): cada orden pide, de cada referencia, al menos `undMinimas` (areas-config: undMinimasPorOrden)
+  const undMinimas = Math.max(1, Number(opciones && opciones.undMinimas) || 1);
   const grupos = new Map();
   filas.forEach(f=>{
     const cal = calendario[String(f.Ordem_Serial)] || {};
@@ -47,7 +50,9 @@ function agrupar(filas, calendario, stock){
     const clave = codmat + '|' + puestoNorm(puesto);
     let g = grupos.get(clave);
     if(!g){ g = { clave, CodMat: codmat, Descricao: texto(f.Descricao), Puestodetrabajo: puesto, vehiculos: new Set(), Cantidad: 0, ordenes: [] }; grupos.set(clave, g); }
-    g.Cantidad += unidades(f.Cantidad);
+    const und = unidades(f.Cantidad), efectivas = Math.max(und, undMinimas);
+    g.Cantidad += efectivas;
+    if(efectivas > und) g.Ajustadas = (g.Ajustadas || 0) + 1; // órdenes que SAGA trae con menos de lo que llevan
     if(!g.ordenes.includes(String(f.Ordem_Serial))) g.ordenes.push(String(f.Ordem_Serial));
     if(cal.vehiculo) g.vehiculos.add(texto(cal.vehiculo));
     if(!g.Descricao && f.Descricao) g.Descricao = texto(f.Descricao);
@@ -66,7 +71,7 @@ function agrupar(filas, calendario, stock){
   });
   const salida = lista.map(g=>({
     clave: g.clave, CodMat: g.CodMat, Descricao: g.Descricao, Vehiculo: [...g.vehiculos].join(' · '),
-    Puestodetrabajo: g.Puestodetrabajo, Cantidad: g.Cantidad, Cubierto: g.Cubierto, Falta: g.Falta,
+    Puestodetrabajo: g.Puestodetrabajo, Cantidad: g.Cantidad, Cubierto: g.Cubierto, Falta: g.Falta, Ajustadas: g.Ajustadas || 0,
     Ordenes: g.ordenes.length, ordenes: g.ordenes.slice(0, 50)
   }));
   return { filas: salida, totales };

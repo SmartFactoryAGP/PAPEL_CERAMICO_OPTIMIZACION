@@ -196,13 +196,18 @@ async function imprimirStickersZPL(ordenesConUbicacion){
 }
 
 /* =========================================================
-   STICKERS DE MALLAS — uno por cada malla que entra al Rack
+   STICKERS DE MALLAS — uno por cada JUEGO (2 UND) que entra al Rack
    =========================================================
    Mismo tamaño (100x30mm) y el mismo cuidado con el margen de abajo que el
    de papel cerámico (todo termina antes de los ~18,5mm). Lleva: CodMat
    (grande y en código de barras, para escanearlo al dar salida),
    descripción, quién le dio la entrada y cuándo.
    lineas: [{codmat, descripcion, cantidad}] — usuario y fecha, de la entrada. */
+/* Cuántos stickers salen por una entrada de `cantidad` UND: uno por juego (areas-config: undPorSticker). */
+function stickersDe(cantidad){
+  const por = Math.max(1, Number((typeof areaActual==='function' && areaActual().undPorSticker)) || 1);
+  return Math.max(1, Math.ceil(Math.round(cantidad) / por));
+}
 const fechaSticker = iso => { const d = iso ? new Date(iso) : new Date(); return d.toLocaleString('es-CO', {day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit'}); };
 function zplStickerMalla(l, usuario, fecha){
   const codmat = escaparZPL(l.codmat);
@@ -220,8 +225,8 @@ function zplStickerMalla(l, usuario, fecha){
     `^FO${mmAdots(56)},${mmAdots(6.6)}^A0N,${mmAdots(2.2)},${mmAdots(2.2)}^FD${quien}^FS`,
     `^FO${mmAdots(4)},${mmAdots(9.5)}^BY2^BCN,${mmAdots(6)},N,N,N^FD${codmat}^FS`,
     `^FO${mmAdots(4)},${mmAdots(16.5)}^A0N,${mmAdots(1.8)},${mmAdots(1.8)}^FD${desc}^FS`,
-    // una copia por malla: un solo diseño con ^PQ (no N etiquetas repetidas en el pedido)
-    `^PQ${Math.max(1, Math.round(l.cantidad))}`,
+    // una copia por juego: un solo diseño con ^PQ (no N etiquetas repetidas en el pedido)
+    `^PQ${stickersDe(l.cantidad)}`,
     '^XZ'
   ].join('\n');
 }
@@ -235,7 +240,7 @@ function generarStickersMallasPDF(lineas, usuario, fecha){
   const doc = new jsPDF({unit:'mm', format:[100,30], orientation:'landscape'});
   let primera = true;
   lineas.forEach(l=>{
-    for(let i=0; i<Math.max(1, Math.round(l.cantidad)); i++){
+    for(let i=0; i<stickersDe(l.cantidad); i++){
       if(!primera) doc.addPage([100,30], 'landscape');
       primera = false;
       doc.setDrawColor(0); doc.setLineWidth(0.4); doc.rect(1,1,98,28);

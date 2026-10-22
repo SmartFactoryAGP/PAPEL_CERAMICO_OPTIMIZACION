@@ -26,6 +26,13 @@ prueba('Mallas: Lista de corte por CodMat y stock', async limpiar=>{
     ['600019608', 'Planeacion', 2, 1, 1, 1, 'BMW X5'],   // y lo que sobra, Planeacion
     ['600039800', '05EMPAL', 1, 0, 1, 1, 'URO VAMTAC'],
   ]);
+  // órdenes mal configuradas: SAGA trae 1 UND de una referencia que en realidad lleva un juego (2 UND)
+  const mal = [{ Ordem_Serial: 10, CodMat: '000000000600019608', Cantidad: '1.000' }, { Ordem_Serial: 11, CodMat: '000000000600019608', Cantidad: '2.000' }, { Ordem_Serial: 12, CodMat: '000000000600019608', Cantidad: '3.000' }, { Ordem_Serial: 13, CodMat: '000000000600019608', Cantidad: '' }];
+  const calMal = { 10: { puesto: '12P_ENSA' }, 11: { puesto: '12P_ENSA' }, 12: { puesto: '12P_ENSA' }, 13: { puesto: '12P_ENSA' } };
+  const sin = reglas.agrupar(mal, calMal, new Map()).filas[0], con = reglas.agrupar(mal, calMal, new Map(), { undMinimas: 2 }).filas[0];
+  assert.deepStrictEqual([sin.Cantidad, sin.Ajustadas], [7, 0], 'sin la opción, SAGA tal cual (1+2+3+1)');
+  assert.deepStrictEqual([con.Cantidad, con.Ajustadas], [9, 2], 'con 2 UND mínimas: 2+2+3+2; ajustadas la de 1 y la vacía (la de 3 no se toca)');
+  ok('regla: cada orden cuenta al menos un juego (2 UND) de cada referencia; las de 1 UND se corrigen, las de 2 o más quedan como están');
   // escritos como en la tabla real de Calendario
   assert.ok(reglas.puestoPermitido('04SER_TT') && reglas.puestoPermitido('05EMPAL') && reglas.puestoPermitido('04ser_vt'));
   assert.ok(!reglas.puestoPermitido('18INSFIN'));
@@ -64,10 +71,10 @@ prueba('Mallas: Lista de corte por CodMat y stock', async limpiar=>{
   const resumen = l => l.ordenes.map(f=>`${f.CodMat}@${f.Puestodetrabajo}:${f.Cantidad}/${f.Falta}`).join(' ');
 
   const l1 = await lista();
-  assert.strictEqual(resumen(l1), '600019608@12P_ENSA:1/1 600019608@Planeacion:2/2 600039800@02CNC:1/1');
+  assert.strictEqual(resumen(l1), '600019608@12P_ENSA:2/2 600019608@Planeacion:2/2 600039800@02CNC:2/2');
   const f = l1.ordenes[0];
   assert.ok(f.Vehiculo==='BMW X5 4D UTILITY' && f.Descricao==='MTNTF0036.1244.01 D' && !('ARCHIVO' in f));
-  ok('Lista de corte: Operation 2900 + UND + "TNT"; por CodMat (sin ceros) y puesto; Cantidad suma m2 (Planeacion = 2); 16ACV, sin "TNT" y KG afuera');
+  ok('Lista de corte: Operation 2900 + UND + "TNT"; por CodMat (sin ceros) y puesto; Cantidad suma m2 pero cada orden cuenta un juego (2 UND) como mínimo; 16ACV, sin "TNT" y KG afuera');
 
   // el que fabrica (solo Lista de corte) da ENTRADA; la necesidad baja al instante, sin otra consulta a SQL
   const oFab = oyente(p.url, tFab); limpiar(()=>oFab.cerrar()); await sleep(200);
@@ -80,7 +87,7 @@ prueba('Mallas: Lista de corte por CodMat y stock', async limpiar=>{
   await sleep(200);
   assert.ok(oFab.eventos.some(e=>e.tipo==='lista' && e.area==='mallas'), 'no se avisó que la lista cambió');
   const l2 = await lista();
-  assert.strictEqual(resumen(l2), '600019608@12P_ENSA:1/0 600019608@Planeacion:2/1 600039800@02CNC:1/1');
+  assert.strictEqual(resumen(l2), '600019608@12P_ENSA:2/0 600019608@Planeacion:2/2 600039800@02CNC:2/2');
   assert.notStrictEqual(l2.version, l1.version);
   assert.strictEqual(JSON.parse(fs.readFileSync(conteo, 'utf8')).mallas, 1, 'la entrada volvió a consultar SQL');
   ok('entrada de 2 desde Lista de corte (a nombre de quien la dio, sin duplicar): Falta baja al instante, aviso en vivo, sin consultar SQL');
@@ -92,7 +99,7 @@ prueba('Mallas: Lista de corte por CodMat y stock', async limpiar=>{
   const s1 = await sal(tRack, 1);
   assert.strictEqual(s1.s, 200);
   assert.deepStrictEqual(s1.d.stock, [{ material: '600019608', medida: '', cantidad: 1, nombre: 'MTNTF0036.1244.01 D' }], 'la salida sin descripción no tiene que pisar el nombre');
-  assert.strictEqual(resumen(await lista()), '600019608@12P_ENSA:1/0 600019608@Planeacion:2/2 600039800@02CNC:1/1');
+  assert.strictEqual(resumen(await lista()), '600019608@12P_ENSA:2/1 600019608@Planeacion:2/2 600039800@02CNC:2/2');
   const rd = (await api(p.url, 'GET', '/api/rack-resumen-dia', { token: tFab, area: 'mallas' })).d;
   assert.deepStrictEqual(rd, { entradasHoy: 2, salidasHoy: 1, enStock: 1 });
   ok('salida: solo con permiso de Rack (403 si no), nunca más de lo que hay (409); el stock que sale vuelve a ser necesidad; resumen del día en unidades');

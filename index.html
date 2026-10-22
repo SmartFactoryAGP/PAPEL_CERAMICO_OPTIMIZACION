@@ -10,7 +10,7 @@
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Manrope:wght@600;700;800&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;700&display=swap">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
-<link rel="stylesheet" href="css/styles.css?v=20261021l">
+<link rel="stylesheet" href="css/styles.css?v=20261021n">
 </head>
 <body data-area="papel">
 
@@ -478,7 +478,7 @@
 
   <!-- ===== Rack de Mallas: stock por CodMat (ver js/ui/mallas.js) ===== -->
   <div class="panel controls" data-areas="mallas">
-    <div class="hint" style="margin-top:0">Stock de <span data-pieza="varias">mallas</span> por <b>CodMat</b>. Entra desde <b>Lista de corte</b> (con un sticker por <span data-pieza="una">malla</span>) y sale acá cuando se usa.</div>
+    <div class="hint" style="margin-top:0">Stock de <span data-pieza="varias">mallas</span> por <b>CodMat</b>. Entra desde <b>Lista de corte</b> (con su sticker; en Mallas, <b>uno por juego</b> de 2 UND) y sale acá cuando se usa.</div>
     <div class="kpiRow">
       <div class="stat big"><span><span data-pieza="varias">mallas</span> en stock</span><b id="msKpiStock">—</b></div>
       <div class="stat big"><span>Hoy entran / salen</span><b id="msKpiHoy">—</b></div>
@@ -813,58 +813,58 @@
 </div>
 
 <!-- ===== núcleo geométrico (sin dependencias del resto) ===== -->
-<script src="js/core/geometry.js?v=20261021l"></script>
-<script src="js/core/polygon.js?v=20261021l"></script>
-<script src="js/core/transform.js?v=20261021l"></script>
-<script src="js/core/areas-config.js?v=20261021l"></script>
+<script src="js/core/geometry.js?v=20261021n"></script>
+<script src="js/core/polygon.js?v=20261021n"></script>
+<script src="js/core/transform.js?v=20261021n"></script>
+<script src="js/core/areas-config.js?v=20261021n"></script>
 
 <!-- ===== lectura y reparación de DXF ===== -->
-<script src="js/dxf/parser.js?v=20261021l"></script>
-<script src="js/dxf/repair.js?v=20261021l"></script>
+<script src="js/dxf/parser.js?v=20261021n"></script>
+<script src="js/dxf/repair.js?v=20261021n"></script>
 
 <!-- ===== motor de nesting ===== -->
-<script src="js/nesting/orientation.js?v=20261021l"></script>
-<script src="js/nesting/placement.js?v=20261021l"></script>
-<script src="js/nesting/scoring.js?v=20261021l"></script>
-<script src="js/nesting/optimization.js?v=20261021l"></script>
+<script src="js/nesting/orientation.js?v=20261021n"></script>
+<script src="js/nesting/placement.js?v=20261021n"></script>
+<script src="js/nesting/scoring.js?v=20261021n"></script>
+<script src="js/nesting/optimization.js?v=20261021n"></script>
 
 <!-- ===== puente al Web Worker real (Bloque 3) ===== -->
-<script src="js/nesting/worker-bridge.js?v=20261021l"></script>
+<script src="js/nesting/worker-bridge.js?v=20261021n"></script>
 
 <!-- ===== tiras de relleno automáticas ===== -->
-<script src="js/strips/strips.js?v=20261021l"></script>
+<script src="js/strips/strips.js?v=20261021n"></script>
 
 <!-- ===== interfaz ===== -->
-<script src="js/ui/html.js?v=20261021l"></script>
-<script src="js/ui/areas.js?v=20261021l"></script>
-<script src="js/ui/pieces.js?v=20261021l"></script>
-<script src="js/ui/render.js?v=20261021l"></script>
-<script src="js/ui/history.js?v=20261021l"></script>
-<script src="js/ui/repair.js?v=20261021l"></script>
+<script src="js/ui/html.js?v=20261021n"></script>
+<script src="js/ui/areas.js?v=20261021n"></script>
+<script src="js/ui/pieces.js?v=20261021n"></script>
+<script src="js/ui/render.js?v=20261021n"></script>
+<script src="js/ui/history.js?v=20261021n"></script>
+<script src="js/ui/repair.js?v=20261021n"></script>
 
 <!-- ===== orquestación del motor (une UI + nesting) ===== -->
-<script src="js/nesting/engine.js?v=20261021l"></script>
+<script src="js/nesting/engine.js?v=20261021n"></script>
 
 <!-- ===== exportación ===== -->
-<script src="js/export/dxf.js?v=20261021l"></script>
-<script src="js/export/zip.js?v=20261021l"></script>
-<script src="js/export/pdf.js?v=20261021l"></script>
-<script src="js/export/stickers.js?v=20261021l"></script>
-<script src="js/export/excel.js?v=20261021l"></script>
+<script src="js/export/dxf.js?v=20261021n"></script>
+<script src="js/export/zip.js?v=20261021n"></script>
+<script src="js/export/pdf.js?v=20261021n"></script>
+<script src="js/export/stickers.js?v=20261021n"></script>
+<script src="js/export/excel.js?v=20261021n"></script>
 
 <!-- ===== arranque de la app (áreas, pestañas, sesión) ===== -->
-<script src="js/ui/historial-admin.js?v=20261021l"></script>
-<script src="js/ui/orders.js?v=20261021l"></script>
-<script src="js/ui/inventario.js?v=20261021l"></script>
-<script src="js/ui/mallas.js?v=20261021l"></script>
-<script src="js/ui/tejidos.js?v=20261021l"></script>
-<script src="js/ui/inventario-vistas.js?v=20261021l"></script>
-<script src="js/ui/tecoflex-nesting.js?v=20261021l"></script>
-<script src="js/ui/tiempo-real.js?v=20261021l"></script>
-<script src="js/ui/auth.js?v=20261021l"></script>
-<script src="js/ui/usuarios.js?v=20261021l"></script>
-<script src="js/ui/aprobaciones.js?v=20261021l"></script>
-<script src="js/app.js?v=20261021l"></script>
+<script src="js/ui/historial-admin.js?v=20261021n"></script>
+<script src="js/ui/orders.js?v=20261021n"></script>
+<script src="js/ui/inventario.js?v=20261021n"></script>
+<script src="js/ui/mallas.js?v=20261021n"></script>
+<script src="js/ui/tejidos.js?v=20261021n"></script>
+<script src="js/ui/inventario-vistas.js?v=20261021n"></script>
+<script src="js/ui/tecoflex-nesting.js?v=20261021n"></script>
+<script src="js/ui/tiempo-real.js?v=20261021n"></script>
+<script src="js/ui/auth.js?v=20261021n"></script>
+<script src="js/ui/usuarios.js?v=20261021n"></script>
+<script src="js/ui/aprobaciones.js?v=20261021n"></script>
+<script src="js/app.js?v=20261021n"></script>
 
 <!-- Aviso de seguridad: si el CSS o el JS no llegaron a cargar (por ej.
      si abriste este archivo haciendo doble clic ADENTRO de un .zip sin

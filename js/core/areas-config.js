@@ -78,7 +78,7 @@
       mallas: {
         id: 'mallas',
         nombre: 'Mallas',
-        resumen: 'Qué fabricar por CodMat y stock con sticker por malla',
+        resumen: 'Qué fabricar por CodMat y stock, con un sticker por juego',
         vistas: ['ordenes', 'rack'],
         nesting: false,
         stickers: true,
@@ -87,6 +87,11 @@
         // una orden por casilla: se da entrada a lo fabricado (un sticker por
         // malla) y el stock se descuenta de la necesidad de Lista de corte
         listaPorCodmat: true, // Lista de corte por CodMat (no por orden), con lo que falta
+        // cada orden lleva un JUEGO de cada referencia (2 UND); en SAGA hay órdenes que la traen con 1 UND
+        // por error, así que cada orden cuenta al menos esto por referencia. El stock, las entradas y las
+        // salidas son en UND de la misma referencia.
+        undMinimasPorOrden: 2,
+        undPorSticker: 2,     // un sticker por JUEGO (2 UND) que entra, no uno por UND
         rack: { tipo: 'inventario', porCodmat: true },
         pieza: { una: 'malla', varias: 'mallas' }   // cómo se nombra cada unidad en pantalla
       },

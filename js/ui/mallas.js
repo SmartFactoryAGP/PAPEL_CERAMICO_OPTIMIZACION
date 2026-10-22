@@ -60,8 +60,8 @@ function msAgrupado(){
     const grupo = msEsPlaneacion(f.Puestodetrabajo) ? 'planeacion' : 'liberadas';
     const clave = f.CodMat + '|' + grupo;
     let g = grupos.get(clave);
-    if(!g){ g = { clave, grupo, CodMat: f.CodMat, Descricao: f.Descricao, Tamano: f.Tamano || '', Cantidad: 0, Cubierto: 0, Falta: 0, vehiculos: new Set(), ordenes: [], puestos: [] }; grupos.set(clave, g); }
-    g.Cantidad += f.Cantidad; g.Cubierto += f.Cubierto; g.Falta += f.Falta;
+    if(!g){ g = { clave, grupo, CodMat: f.CodMat, Descricao: f.Descricao, Tamano: f.Tamano || '', Cantidad: 0, Cubierto: 0, Falta: 0, Ajustadas: 0, vehiculos: new Set(), ordenes: [], puestos: [] }; grupos.set(clave, g); }
+    g.Cantidad += f.Cantidad; g.Cubierto += f.Cubierto; g.Falta += f.Falta; g.Ajustadas += f.Ajustadas || 0;
     String(f.Vehiculo||'').split(' · ').filter(Boolean).forEach(v=>g.vehiculos.add(v));
     g.ordenes.push(...(f.ordenes||[]));
     g.puestos.push(`${f.Puestodetrabajo}: ${msNum(f.Cantidad)}`);
@@ -102,7 +102,7 @@ function msRenderLista(){
       <td>${escapeHtml(f.CodMat)}</td>
       <td class="msDesc">${escapeHtml(f.Descricao||'—')}</td>
       ${celdaTamano(f)}
-      <td class="num">${msNum(f.Cantidad)}</td>
+      <td class="num"${f.Ajustadas ? ` title="${f.Ajustadas} orden(es) venían de SAGA con 1 UND: se cuentan como un juego (2 UND)"` : ''}>${msNum(f.Cantidad)}${f.Ajustadas ? '<sup class="msAjuste">*</sup>' : ''}</td>
       <td class="num">${f.Cubierto ? msNum(f.Cubierto) : '—'}</td>
       <td class="num"><b class="${f.Falta ? 'msFalta' : 'msOk'}">${f.Falta ? msNum(f.Falta) : '✓ cubierto'}</b></td>
       <td>${escapeHtml(f.Vehiculo||'—')}</td>
@@ -175,7 +175,7 @@ function msDibujarCarrito(tipo){
   const btn = document.getElementById(idBtn);
   btn.disabled = !lista.length || msOcupado;
   btn.textContent = tipo==='entrada'
-    ? (total ? `Dar entrada e imprimir ${msNum(total)} sticker${total===1?'':'s'}` : 'Dar entrada')
+    ? (total ? `Dar entrada e imprimir ${msNum(msStickers())} sticker${msStickers()===1?'':'s'}` : 'Dar entrada')
     : (total ? `Registrar salida de ${msNum(total)}` : 'Registrar salida');
   document.getElementById(idLista).innerHTML = lista.length ? lista.map((l, i)=>{
     const hay = (msStock.get(l.codmat)||{}).cantidad || 0;
@@ -196,7 +196,9 @@ function msCambiarCantidad(tipo, i, valor){
   msDibujarCarrito(tipo);
 }
 
-/* Registra el carrito. Entrada: además, un sticker por unidad. */
+/* Stickers del carrito de entrada: uno por juego (areas-config: undPorSticker), por cada CodMat. */
+function msStickers(){ return msEntrada.reduce((s, l)=>s + stickersDe(l.cantidad), 0); }
+/* Registra el carrito. Entrada: además, un sticker por juego. */
 async function msRegistrar(tipo){
   const lista = MS_CARRITO[tipo].lista();
   if(!lista.length || msOcupado) return;
@@ -217,13 +219,13 @@ async function msRegistrar(tipo){
     const data = await res.json().catch(()=>({}));
     if(!res.ok) throw new Error((data.error || ('HTTP '+res.status)) + (data.detalles ? ' ' + data.detalles.join(' · ') : ''));
     msAplicarResultado(Object.assign({ area: areaActualId }, data));
-    const total = lista.reduce((s, l)=>s + l.cantidad, 0);
+    const total = lista.reduce((s, l)=>s + l.cantidad, 0), nStickers = lista.reduce((s, l)=>s + stickersDe(l.cantidad), 0);
     MS_CARRITO[tipo].set([]); msLotes[tipo] = null;
     document.getElementById(tipo==='entrada' ? 'msEntNota' : 'msSalNota').value = '';
     if(tipo==='entrada'){
       status.className = 'hint msg-ok';
       status.textContent = `Listo: entraron ${msPiezas(total)}. Imprimiendo stickers…`;
-      status.textContent = `Listo: entraron ${msPiezas(total)}. ` + await msImprimir(lista, data.movimiento);
+      status.textContent = `Listo: entraron ${msPiezas(total)} (${nStickers} sticker${nStickers===1?'':'s'}). ` + await msImprimir(lista, data.movimiento);
       if(typeof ordRefrescar==='function') ordRefrescar({auto:true}); // "Falta" baja ya
     } else {
       status.className = 'hint msg-ok';
@@ -336,9 +338,11 @@ function msSumarSalida(codmat){
   const l = msSalida.find(x=>x.codmat===codmat);
   const ya = l ? l.cantidad : 0;
   if(ya >= s.cantidad){ msg.className = 'hint msg-error'; msg.textContent = `De ${codmat} hay ${msNum(s.cantidad)} y ya están todas en la salida.`; return; }
-  if(l) l.cantidad++; else msSalida.push({ codmat, descripcion: s.nombre, cantidad: 1 });
+  // cada sticker es un JUEGO (areas-config: undPorSticker UND): un escaneo suma el juego entero (o lo que quede)
+  const juego = Math.max(1, areaActual().undPorSticker || 1), nueva = Math.min(ya + juego, s.cantidad);
+  if(l) l.cantidad = nueva; else msSalida.push({ codmat, descripcion: s.nombre, cantidad: nueva });
   msLotes.salida = null;
-  msg.className = 'hint msg-ok'; msg.textContent = `+1 ${codmat} (${ya+1} en la salida)`;
+  msg.className = 'hint msg-ok'; msg.textContent = `+${nueva - ya} ${codmat} (${nueva} en la salida)`;
   msDibujarCarrito('salida');
 }
 

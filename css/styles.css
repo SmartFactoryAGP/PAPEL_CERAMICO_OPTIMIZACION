@@ -1154,3 +1154,5 @@ body[data-area="tejidos"] .loginBrand::after{
 .haCuenta{ font-weight:700 }
 .haEliminar{ background:var(--warn); color:#fff; border:0; border-radius:9px; padding:8px 14px; font-weight:700; cursor:pointer }
 .haEliminar:disabled{ opacity:.6; cursor:wait }
+
+.msAjuste{ color:var(--warn); font-weight:800; margin-left:2px; cursor:help }

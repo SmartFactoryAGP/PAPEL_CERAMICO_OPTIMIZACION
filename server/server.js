@@ -821,7 +821,7 @@ app.get('/api/ordenes-pendientes', exigirPermiso('ordenes'), async (req, res) =>
     if(req.query.version && req.query.version===version) return res.json({ sinCambios: true, ...cabecera });
     const c = await cacheLista(`${area.id}|${version}|${puedeForzar}|${r.aviso || ''}`, ()=>({
       ordenes: area.id==='papel' ? clasificarPapel(r.datos).entran
-             : porCodmat ? conTamano(area, reglasMallas.agrupar(r.datos.filas, r.datos.cal, stockDeArea(area)).filas)
+             : porCodmat ? conTamano(area, reglasMallas.agrupar(r.datos.filas, r.datos.cal, stockDeArea(area), { undMinimas: area.undMinimasPorOrden }).filas)
              : r.datos,
       ...cabecera
     }));

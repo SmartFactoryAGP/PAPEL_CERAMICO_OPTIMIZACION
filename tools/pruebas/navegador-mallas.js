@@ -1,5 +1,5 @@
 // La app de verdad en Chrome, área Mallas (con el SQL simulado): Lista de
-// corte por CodMat, elegir lo fabricado, dar entrada (un sticker por malla),
+// corte por CodMat, elegir lo fabricado, dar entrada (un sticker por juego),
 // y en el Rack dar salida escaneando el sticker. Capturas en capturas/.
 const fs = require('fs'), path = require('path'), assert = require('assert');
 const { ok, sleep, prepararCopia, borrarCopia, arrancarPuente, abrirChrome, prueba } = require('./comun');
@@ -31,14 +31,14 @@ prueba('Navegador: Mallas (lista por CodMat, entrada con stickers, salida escane
   // por CodMat, sin puesto: cada material una sola vez entre las liberadas; Planeación aparte
   const filas = () => A.ev(`[...document.querySelectorAll('#ordTableWrap tr.msFila')].map(tr=>tr.closest('tbody').classList[1] + ': ' + [...tr.cells].slice(0,6).map(c=>c.textContent.trim()).join(' | '))`);
   assert.deepStrictEqual(await filas(), [
-    'liberadas: 600019608 | MTNTF0036.1244.01.00.00 D | 1 | — | 1 | BMW X5 4D UTILITY',
-    'liberadas: 600039800 | MTNTF0036.1567.08.00 | 1 | — | 1 | URO VAMTAC ST5 4PC TRUCK',
+    'liberadas: 600019608 | MTNTF0036.1244.01.00.00 D | 2* | — | 2 | BMW X5 4D UTILITY',   // SAGA trae 1 UND: cuenta un juego (2)
+    'liberadas: 600039800 | MTNTF0036.1567.08.00 | 2* | — | 2 | URO VAMTAC ST5 4PC TRUCK',
     'planeacion: 600019608 | MTNTF0036.1244.01.00.00 D | 2 | — | 2 | BMW X5 4D UTILITY']);
   assert.deepStrictEqual(await A.ev(`[...document.querySelectorAll('.msGrupoHead b')].map(b=>b.textContent)`), ['Liberadas', 'En planeación']);
-  assert.strictEqual(await A.ev(`document.getElementById('msKpiFalta').textContent`), '2'); // solo lo liberado
+  assert.strictEqual(await A.ev(`document.getElementById('msKpiFalta').textContent`), '4'); // solo lo liberado
   // necesidad por puesto, en el orden del proceso y Planeación al final
   assert.deepStrictEqual(await A.ev(`[...document.querySelectorAll('#msPorPuesto .msPuesto')].map(d=>d.querySelector('.msPuestoHead > b').textContent + ' ' + d.querySelector('.msPuestoHead span').textContent.trim() + ' ' + [...d.querySelectorAll('.msPuestoLinea .mono')].map(x=>x.textContent).join(','))`),
-    ['02CNC faltan 1 600039800', '12P_ENSA faltan 1 600019608', 'Planeación faltan 2 600019608']);
+    ['02CNC faltan 2 600039800', '12P_ENSA faltan 2 600019608', 'Planeación faltan 2 600019608']);
   assert.strictEqual(await A.ev(`document.querySelector('.quickAdd').offsetParent===null && document.getElementById('ordRunBtn').offsetParent===null`), true, 'en Mallas no van ingreso por orden ni nesting');
   ok('Lista de corte de Mallas: por CodMat sin puesto (sin repetidos), Planeación aparte; al lado, la necesidad por puesto (02CNC, 12P_ENSA, Planeación)');
 
@@ -63,8 +63,8 @@ prueba('Navegador: Mallas (lista por CodMat, entrada con stickers, salida escane
   // elegir lo fabricado: tocar las 2 filas del mismo CodMat suma lo que falta de cada una
   await A.ev(`document.querySelectorAll('#ordTableWrap tr.msFila')[0].click(); document.querySelectorAll('#ordTableWrap tr.msFila')[2].click(); 1`);
   assert.strictEqual(await A.ev(`document.querySelectorAll('#msEntLista .cartRow').length`), 1);
-  assert.strictEqual(await A.ev(`document.querySelector('#msEntLista .cartQty').value`), '3');
-  assert.strictEqual(await A.ev(`document.getElementById('msEntConfirmar').textContent.trim()`), 'Dar entrada e imprimir 3 stickers');
+  assert.strictEqual(await A.ev(`document.querySelector('#msEntLista .cartQty').value`), '4');
+  assert.strictEqual(await A.ev(`document.getElementById('msEntConfirmar').textContent.trim()`), 'Dar entrada e imprimir 2 stickers');
   await A.captura(path.join(CAPTURAS, 'mallas-lista.png'));
   // la lista es lo principal: ocupa más de la mitad del ancho, también en una pantalla de 1536 px (1920 al 125%)
   await A.send('Emulation.setDeviceMetricsOverride', { width: 1536, height: 820, deviceScaleFactor: 1, mobile: false }); await sleep(300);
@@ -73,33 +73,33 @@ prueba('Navegador: Mallas (lista por CodMat, entrada con stickers, salida escane
   assert.strictEqual(await A.ev(`(()=>{ const w=document.getElementById('ordTableWrap'); return w.scrollWidth <= w.clientWidth + 2; })()`), true, 'la tabla no entra entera: hay que desplazarla');
   await A.captura(path.join(CAPTURAS, 'mallas-lista-1536.png'));
   await A.send('Emulation.setDeviceMetricsOverride', { width: 1600, height: 1000, deviceScaleFactor: 1, mobile: false }); await sleep(200);
-  ok('tocar las filas del CodMat 600019608 las junta en "Entrada al rack" con lo que falta (3): "Dar entrada e imprimir 3 stickers"');
+  ok('tocar las filas del CodMat 600019608 las junta en "Entrada al rack" con lo que falta (4): "Dar entrada e imprimir 2 stickers" (un sticker por juego de 2 UND)');
 
-  // dar entrada: sin Zebra configurada, sale el PDF con UN sticker por malla
+  // dar entrada: sin Zebra configurada, sale el PDF con un sticker por JUEGO (2 UND)
   // se intercepta la descarga del PDF para contar los stickers (jsPDF arma cada documento en su constructor)
   await A.ev(`window.__pdf = null; const J0 = window.jspdf.jsPDF;
     window.jspdf.jsPDF = function(...a){ const d = new J0(...a); d.save = n=>{ window.__pdf = { n, paginas: d.getNumberOfPages() }; }; return d; }; 1`);
   await A.ev(`document.getElementById('msEntConfirmar').click(); 1`); await sleep(1500);
   const st = await A.ev(`document.getElementById('msEntStatus').textContent`);
-  assert.ok(/entraron 3/.test(st) && /PDF/.test(st), st);
-  assert.strictEqual((await A.ev(`window.__pdf`)).paginas, 3, 'tienen que salir 3 stickers');
-  assert.deepStrictEqual((await filas()).map(f=>f.split(' | ').slice(2, 5).join(' ')), ['1 1 ✓ cubierto', '1 — 1', '2 2 ✓ cubierto']);
-  assert.strictEqual(await A.ev(`document.getElementById('msKpiFalta').textContent`), '1');
-  ok(`entrada de 3: "${st.trim()}"; el PDF trae 3 stickers; en la lista el stock ya cubre ese CodMat ("✓ cubierto") y Faltan baja a 1`);
+  assert.ok(/entraron 4/.test(st) && /PDF/.test(st), st);
+  assert.strictEqual((await A.ev(`window.__pdf`)).paginas, 2, 'tiene que salir un sticker por juego: 4 UND = 2 stickers');
+  assert.deepStrictEqual((await filas()).map(f=>f.split(' | ').slice(2, 5).join(' ')), ['2* 2 ✓ cubierto', '2* — 2', '2 2 ✓ cubierto']);
+  assert.strictEqual(await A.ev(`document.getElementById('msKpiFalta').textContent`), '2');
+  ok(`entrada de 4: "${st.trim()}"; el PDF trae 2 stickers (uno por juego); en la lista el stock ya cubre ese CodMat ("✓ cubierto") y Faltan baja a 2`);
 
   // Rack: stock y salida escaneando el sticker (con los ceros de SAP, como venga)
   await A.ev(`document.getElementById('tabRack').click(); 1`); await sleep(900);
   const stock = await A.ev(`[...document.querySelectorAll('#msStockWrap tbody tr')].map(tr=>[...tr.cells].slice(0,5).map(c=>c.textContent.trim()).join(' | '))`);
   // solo lo que hay en el rack (600039800 tiene necesidad pero stock 0: no aparece)
-  assert.deepStrictEqual(stock, ['600019608 | MTNTF0036.1244.01.00.00 D | 3 | 3 | —']);
-  await A.ev(`const i=document.getElementById('msSalScan'); for(const v of ['000000000600019608','600019608']){ i.value=v; i.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true})); } 1`);
+  assert.deepStrictEqual(stock, ['600019608 | MTNTF0036.1244.01.00.00 D | 4 | 4 | —']);
+  await A.ev(`const i=document.getElementById('msSalScan'); for(const v of ['000000000600019608']){ i.value=v; i.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true})); } 1`);
   assert.strictEqual(await A.ev(`document.querySelector('#msSalLista .cartQty').value`), '2');
   await A.captura(path.join(CAPTURAS, 'mallas-rack.png'));
   await A.ev(`document.getElementById('msSalConfirmar').click(); 1`); await sleep(1000);
   assert.ok(/salieron 2/.test(await A.ev(`document.getElementById('msSalStatus').textContent`)));
-  assert.strictEqual(await A.ev(`document.querySelector('#msStockWrap tbody tr').cells[2].textContent.trim()`), '1');
-  assert.strictEqual(await A.ev(`document.getElementById('msKpiHoy').textContent`), '3 / 2');
-  ok('Rack: stock 3 con su necesidad; 2 escaneos del sticker (con o sin ceros) = salida de 2; queda 1; hoy entran 3 / salen 2');
+  assert.strictEqual(await A.ev(`document.querySelector('#msStockWrap tbody tr').cells[2].textContent.trim()`), '2');
+  assert.strictEqual(await A.ev(`document.getElementById('msKpiHoy').textContent`), '4 / 2');
+  ok('Rack: stock 4 con su necesidad; 1 escaneo del sticker (un juego, con los ceros de SAP) = salida de 2 UND; quedan 2; hoy entran 4 / salen 2');
 
   // Tejidos: su color, su lista (PVTE) y los textos con "tejido"; los carritos no se mezclan entre áreas
   await A.ev(`document.getElementById('tabOrdenes').click(); 1`); await sleep(500);

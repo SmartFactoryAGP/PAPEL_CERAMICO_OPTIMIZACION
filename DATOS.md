@@ -42,7 +42,7 @@ server/datos/
   - Papel cerámico se maneja **por orden**: cada orden ocupa una casilla.
   - Tecoflex se maneja **por cantidad**: stock por material y medida, con entradas y salidas.
   - Tejidos se maneja **por posición**: cada tejido entra solo a una posición libre de su tamaño (o una más grande), con foto del calentamiento, responsables y resistencias. Las fotos se guardan en `tejidos/fotos/` y **no** entran en el respaldo diario (copiarlas 30 veces llenaría el disco): incluí esa carpeta en el respaldo de red de la empresa.
-  - Mallas se maneja **por cantidad y por CodMat**, con su propio stock: entra lo fabricado (un sticker por malla) y sale lo usado. Ese stock se descuenta de lo que pide la Lista de corte.
+  - Mallas se maneja **por cantidad y por CodMat**, con su propio stock: entra lo fabricado (en UND de la misma referencia; un sticker por JUEGO de 2 UND) y sale lo usado (cada sticker escaneado descuenta un juego). Cada orden cuenta al menos 2 UND por referencia (hay órdenes que SAGA trae con 1 por error). Ese stock se descuenta de lo que pide la Lista de corte.
 - **Trazabilidad:** todo movimiento queda registrado con **quién** lo hizo y **cuándo**. Nadie puede usar la app sin usuario.
 - **Formato:** archivos de texto JSON, legibles con cualquier editor. Se pueden abrir para auditoría.
 - **Consumo de Tecoflex:** no tiene archivo propio: sale del diario `tecoflex/movimientos.jsonl` (cada salida queda ahí con fecha, material, medida y cantidad). Al arrancar, el puente lo suma por día, material y medida; la vista "Consumo" del Rack lo consulta de ahí. No se pierde nada ni hay que cargar datos aparte.
